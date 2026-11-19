@@ -1,86 +1,82 @@
 // Deterministic screenshot staging: ?shot=chase|mission|beach|downtown
-// (with &seed=N) puts the live game into a fixed, good-looking scene and
-// the main loop paints it, so the screenshots are real renders of the
-// game at its best — a chase, a job in progress, the beach shootout and
-// downtown at night — never a composite or an edit.
-
+// Each scene sets the player, camera, clock, wanted level and traffic so
+// the four screenshots show the game at its best.
+import { CFG } from './config.js';
 import { createCar, createEnemy } from './entities.js';
-import { shootoutEnemySpots } from './missions.js';
-import { setWanted } from './world.js';
+import { FIXER, MISSIONS } from './missions.js';
+import { setWanted, say } from './world.js';
+import { nearestRoadPoint } from './city.js';
 
-// Put the player in a fresh car at a road position, facing east.
-function givePlayerCar(world, x, y, speed) {
-  const car = createCar(world.nextId(), x, y, 0, '#c94f43', { speed });
+function putPlayerInCar(world, x, y, angle, color) {
+  const car = createCar('sport', x, y, angle, color);
+  car.driver = 'player';
+  car.occupied = true;
   world.cars.push(car);
   world.player.inCar = car;
   world.player.x = x;
   world.player.y = y;
-  car.parked = false;
+  world.player.angle = angle;
   return car;
 }
 
-// Stage one cruiser on the road behind the player.
-function addCruiser(world, x, y, angle) {
-  const cruiser = createCar(world.nextId(), x, y, angle, '#2e4a7a', { police: true, speed: 380 });
-  world.cars.push(cruiser);
-  return cruiser;
+function snapCamera(world) {
+  const p = world.player;
+  world.camera.x = Math.max(0, Math.min(CFG.WORLD_W - CFG.VIEW_W, p.x - CFG.VIEW_W / 2));
+  world.camera.y = Math.max(0, Math.min(CFG.WORLD_H - CFG.VIEW_H, p.y - CFG.VIEW_H / 2));
 }
 
 export function stageShot(world, name) {
-  const player = world.player;
+  const p = world.player;
+  world.screen = 'play';
   if (name === 'chase') {
-    // A three-star chase through Civic Center at golden hour: the player
-    // drifting east with two cruisers on their tail and skid marks behind.
-    world.hour = 17.6;
-    givePlayerCar(world, 1250, 1450, 420);
+    // Golden-hour police chase in Downtown, 3 stars.
+    world.time = 17.6;
+    world.elapsed = ((17.6 - 8.5 + 24) % 24) * (CFG.DAY_LENGTH / 24);
+    putPlayerInCar(world, 1850, 1200, 0, '#c0392b');
+    world.player.inCar.speed = 380;
     setWanted(world, 3);
-    addCruiser(world, 1050, 1450, 0);
-    addCruiser(world, 980, 1434, 0);
-    addCruiser(world, 1120, 1466, 0);
-    for (let i = 0; i < 14; i += 1) {
-      world.skidMarks.push({ x: 1250 - i * 26, y: 1450 + (i % 2 ? 14 : -14), angle: 0, life: 5 });
+    for (let i = 0; i < 2; i++) {
+      const spot = nearestRoadPoint(world.city, 1850 + (i ? -260 : 260), 1200 + (i ? 130 : -90));
+      const cruiser = createCar('police', spot.x, spot.y, Math.atan2(1200 - spot.y, 1850 - spot.x), CFG.POLICE_COLOR);
+      cruiser.driver = 'cop';
+      world.cars.push(cruiser);
     }
-    world.camera.x = 1250;
-    world.camera.y = 1450;
+    say(world, 'The cruisers are on you — lose them!');
   } else if (name === 'mission') {
-    // The first job: Reno on foot at Mara's office, the delivery live,
-    // the objective on the HUD and the blip on the minimap.
-    world.hour = 10.2;
-    player.x = 650;
-    player.y = 1380;
-    player.angle = Math.PI / 2;
-    world.mission.index = 0;
-    world.mission.active = true;
-    world.mission.step = 0;
-    world.camera.x = 650;
-    world.camera.y = 1450;
+    // Morning at Vane's Garage, first job waiting.
+    world.time = 9.2;
+    world.elapsed = ((9.2 - 8.5 + 24) % 24) * (CFG.DAY_LENGTH / 24);
+    p.x = FIXER.x + 40;
+    p.y = FIXER.y + 60;
+    p.angle = -Math.PI / 2;
+    world.progress.started = true;
+    world.progress.mi = 0;
+    world.progress.si = 0;
+    say(world, MISSIONS[0].intro);
   } else if (name === 'beach') {
-    // The Strand shootout at sunset: Reno on the sand, the crew in front
-    // of him, the sea behind them.
-    world.hour = 18.3;
-    player.x = 2980;
-    player.y = 1280;
-    player.angle = 0.2;
-    world.mission.index = 2;
-    world.mission.active = true;
-    world.mission.step = 1;
-    world.missionEnemiesSpawned = true;
-    for (const spot of shootoutEnemySpots()) {
-      world.enemies.push(createEnemy(world.nextId(), spot.x, spot.y));
+    // Sunset shootout on the beach with the Tide Boys.
+    world.time = 18.4;
+    world.elapsed = ((18.4 - 8.5 + 24) % 24) * (CFG.DAY_LENGTH / 24);
+    p.x = 2860;
+    p.y = 1300;
+    p.angle = Math.PI / 2;
+    world.progress.started = true;
+    world.progress.mi = 2;
+    world.progress.si = 0;
+    world.progress.kills = 1;
+    for (const [ex, ey] of [[2920, 1180], [2900, 1420], [2800, 1360]]) {
+      world.enemies.push(createEnemy(ex, ey));
     }
-    world.camera.x = 3010;
-    world.camera.y = 1250;
+    setWanted(world, 2);
+    say(world, 'Hostiles on the pier — take them down! (1/4)');
   } else if (name === 'downtown') {
-    // Downtown at night: Reno driving past Cinder Bay Bank with traffic
-    // and the city lights coming on.
-    world.hour = 21.4;
-    givePlayerCar(world, 1250, 650, 300);
-    setWanted(world, 1);
-    addCruiser(world, 1000, 650, 0);
-    world.camera.x = 1350;
-    world.camera.y = 650;
-  } else {
-    return false;
+    // Night drive through Downtown with traffic.
+    world.time = 22.1;
+    world.elapsed = ((22.1 - 8.5 + 24) % 24) * (CFG.DAY_LENGTH / 24);
+    putPlayerInCar(world, 1850, 750, Math.PI / 2, '#2e86c1');
+    world.player.inCar.speed = 300;
+    setWanted(world, 0);
+    say(world, 'Downtown at night — Solmar Bay never sleeps.');
   }
-  return true;
+  snapCamera(world);
 }

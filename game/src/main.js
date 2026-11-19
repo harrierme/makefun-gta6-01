@@ -1,230 +1,180 @@
 // Boot and the one loop: input is read every frame, the world advances in
-// fixed 1/60 s steps (several in a slow frame, none in a fast one), and the
-// renderer paints what is there. The game moves between five screens:
-// title, play, paused, busted and wasted. Progress autosaves to
-// localStorage, and a saved game can be continued from the title screen.
-//
-// ?seed=N fixes the random stream. ?shot=chase|mission|beach|downtown (with
-// &seed=N) stages that scene instead of running the loop, steps it a fixed
-// number of times so the cars settle, paints it and sets window.__shotReady
-// for a screenshot.
-
-import { SAVE_KEY, STEP } from './config.js';
-import { createRandom } from './random.js';
-import {
-  applySave, createWorld, serializeWorld, updateWorld, wantedStars,
-} from './world.js';
-import {
-  ACTION_CONFIRM, ACTION_CONTINUE, ACTION_MUTE, ACTION_PAUSE, createInput,
-} from './input.js';
-import {
-  SCREEN_BUSTED, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WASTED, createRenderer,
-} from './render.js';
-import { stageShot } from './shots.js';
+// fixed 1/60 steps, the renderer draws every frame. Screenshot mode
+// (?shot=...) stages a scene, settles it, then raises window.__shotReady.
+import { CFG } from './config.js';
+import { createWorld, updateWorld, serializeWorld, applySave, wantedStars } from './world.js';
+import { createRenderer, SCREEN_TITLE, SCREEN_PLAY, SCREEN_PAUSED, SCREEN_BUSTED, SCREEN_WASTED } from './render.js';
+import { createInput } from './input.js';
 import { createAudio } from './audio.js';
+import { stageShot } from './shots.js';
 
-/** The longest frame the loop catches up on; a longer stall (a hidden tab) is dropped, not replayed. */
+const SAVE_KEY = 'solmarbay.save.v1';
+const STEP = 1 / 60;
 const MAX_FRAME = 0.25;
-const AUTOSAVE_SECONDS = 5;
+const AUTOSAVE_EVERY = 5;
 
-const params = new URLSearchParams(window.location.search);
-const shot = params.get('shot');
-const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
-const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() * 4294967296);
-
-const canvas = document.getElementById('game');
-const status = document.getElementById('status');
-
-// Console errors are collected for the headless test run: a screenshot
-// pipeline can read window.__errors and refuse a frame that errored.
 window.__errors = [];
-window.addEventListener('error', (event) => {
-  window.__errors.push(String(event.message ?? event.type));
+window.addEventListener('error', (e) => {
+  window.__errors.push(String(e.message || e.error || 'error'));
 });
-const consoleError = console.error.bind(console);
+const origConsoleError = console.error.bind(console);
 console.error = (...args) => {
-  window.__errors.push(args.map(String).join(' '));
-  consoleError(...args);
+  window.__errors.push(args.map((a) => String(a)).join(' '));
+  origConsoleError(...args);
 };
-
-const renderer = createRenderer(canvas);
-const audio = createAudio();
-const input = createInput(canvas);
-
-let world = createWorld(createRandom(seed));
-// Test handle: the headless playtest drives the live game through this
-// (start it, move the player, read money and mission state). It changes
-// nothing about how the game plays.
-window.__world = world;
-let screen = SCREEN_TITLE;
-let hasSave = false;
-let autosaveTimer = AUTOSAVE_SECONDS;
 
 function readSave() {
   try {
     const raw = window.localStorage.getItem(SAVE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (typeof parsed !== 'object' || parsed === null) return null;
-    return parsed;
-  } catch (error) {
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) {
     return null;
   }
 }
 
-function writeSave() {
+function writeSave(world) {
   try {
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(serializeWorld(world)));
-  } catch (error) {
-    // Storage can be full or blocked; the game plays on without it.
+  } catch (err) {
+    // Storage full or blocked: the game keeps running without a save.
   }
 }
 
-hasSave = readSave() !== null;
+function main() {
+  const params = new URLSearchParams(window.location.search);
+  const seed = Number.parseInt(params.get('seed') || '7', 10) || 7;
+  const shot = params.get('shot');
 
-function setStatus(text) {
-  status.textContent = text;
-}
-
-// Drain the world's event queue into sounds and save points.
-function drainEvents() {
-  for (const event of world.events) {
-    if (event.type === 'shot') audio.gunshot();
-    else if (event.type === 'enemy-shot') audio.enemyShot();
-    else if (event.type === 'crash') audio.crash();
-    else if (event.type === 'pickup') audio.pickup();
-    else if (event.type === 'mission-complete') {
-      audio.missionComplete();
-      writeSave();
-    } else if (event.type === 'horn') audio.horn();
-  }
-  world.events.length = 0;
-}
-
-function startNewGame() {
-  world = createWorld(createRandom(seed));
+  const canvas = document.getElementById('game');
+  const status = document.getElementById('status');
+  const renderer = createRenderer(canvas);
+  const input = createInput(canvas);
+  const audio = createAudio();
+  const world = createWorld(seed);
   window.__world = world;
-  screen = SCREEN_PLAY;
-  autosaveTimer = AUTOSAVE_SECONDS;
-  audio.resume();
-  setStatus('Playing Cinder Bay');
-}
 
-function continueSave() {
-  const save = readSave();
-  if (!save) return;
-  world = createWorld(createRandom(seed));
-  window.__world = world;
-  applySave(world, save);
-  screen = SCREEN_PLAY;
-  autosaveTimer = AUTOSAVE_SECONDS;
-  audio.resume();
-  setStatus('Playing Cinder Bay, continued from your save');
-}
+  let last = performance.now();
+  let acc = 0;
+  let autosaveT = 0;
+  let shotSettled = false;
 
-function frame(now) {
-  requestAnimationFrame(frame);
-  const dt = Math.min(MAX_FRAME, (now - lastNow) / 1000 || 0);
-  lastNow = now;
-
-  if (input.pressed(ACTION_MUTE)) {
-    audio.setMuted(!audio.isMuted());
+  function setStatus(text) {
+    if (status) status.textContent = text;
   }
 
-  if (screen === SCREEN_TITLE) {
-    if (input.pressed(ACTION_CONFIRM)) startNewGame();
-    else if (input.pressed(ACTION_CONTINUE) && hasSave) continueSave();
-    renderer.render(world, SCREEN_TITLE, { hasSave });
-  } else if (screen === SCREEN_PLAY) {
-    if (input.pressed(ACTION_PAUSE)) {
-      screen = SCREEN_PAUSED;
-      setStatus('Paused');
-    } else {
-      let remaining = dt;
-      while (remaining > 0) {
-        const step = Math.min(STEP, remaining);
-        updateWorld(world, input, step);
-        remaining -= step;
-        if (world.over) break;
-      }
-      drainEvents();
-      if (world.over === 'busted') {
-        screen = SCREEN_BUSTED;
-        writeSave();
-        setStatus('Busted by the CBPD');
-      } else if (world.over === 'wasted') {
-        screen = SCREEN_WASTED;
-        writeSave();
-        setStatus('Wasted');
-      }
-      autosaveTimer -= dt;
-      if (autosaveTimer <= 0) {
-        autosaveTimer = AUTOSAVE_SECONDS;
-        writeSave();
-      }
-      const focus = world.player.inCar ?? world.player;
-      audio.update({
-        speed: world.player.inCar ? world.player.inCar.speed : 0,
-        wantedStars: wantedStars(world),
-        playing: screen === SCREEN_PLAY,
-      });
-      void focus;
-      renderer.render(world, SCREEN_PLAY);
+  function drainEvents() {
+    for (const ev of world.events) {
+      if (ev === 'gunshot') audio.gunshot();
+      else if (ev === 'enemyShot') audio.enemyShot();
+      else if (ev === 'crash') audio.crash();
+      else if (ev === 'pickup') audio.pickup();
+      else if (ev === 'missionComplete') audio.missionComplete();
+      else if (ev === 'horn') audio.horn();
     }
-    if (screen === SCREEN_PAUSED) renderer.render(world, SCREEN_PAUSED);
-  } else if (screen === SCREEN_PAUSED) {
-    if (input.pressed(ACTION_PAUSE)) {
-      screen = SCREEN_PLAY;
-      setStatus('Playing Cinder Bay');
-    }
-    renderer.render(world, SCREEN_PAUSED);
-  } else if (screen === SCREEN_BUSTED || screen === SCREEN_WASTED) {
-    if (input.pressed(ACTION_CONFIRM)) {
-      world = createWorld(createRandom(seed));
-      window.__world = world;
-      screen = SCREEN_TITLE;
-      hasSave = readSave() !== null;
-      setStatus('Cinder Bay title screen');
-    }
-    renderer.render(world, screen);
+    world.events.length = 0;
   }
 
-  input.endFrame();
-}
+  function frame(now) {
+    const dt = Math.min(MAX_FRAME, (now - last) / 1000);
+    last = now;
 
-let lastNow = 0;
+    // Screen flow keys.
+    if (world.screen === SCREEN_TITLE) {
+      if (input.pressed('Enter')) {
+        world.screen = SCREEN_PLAY;
+        audio.resume();
+        setStatus('Playing Solmar Bay.');
+      } else if (input.pressed('KeyC')) {
+        const save = readSave();
+        if (save) {
+          applySave(world, save);
+          world.screen = SCREEN_PLAY;
+          audio.resume();
+          setStatus('Continued your saved game.');
+        }
+      }
+    } else if (world.screen === SCREEN_PAUSED) {
+      if (input.pressed('KeyP') || input.pressed('Escape')) world.screen = SCREEN_PLAY;
+    } else if (world.screen === SCREEN_BUSTED || world.screen === SCREEN_WASTED) {
+      if (input.pressed('Enter')) {
+        const save = readSave();
+        const fresh = createWorld(world.seed);
+        if (save) applySave(fresh, save);
+        Object.keys(world).forEach((k) => delete world[k]);
+        Object.assign(world, fresh);
+        world.screen = SCREEN_PLAY;
+      }
+    } else if (world.screen === SCREEN_PLAY) {
+      if (input.pressed('KeyP') || input.pressed('Escape')) {
+        world.screen = SCREEN_PAUSED;
+        writeSave(world);
+      }
+      if (input.pressed('KeyM')) {
+        audio.setMuted(!audio.isMuted());
+      }
+    }
+    if (input.mousePressed() || input.pressed('Enter')) audio.resume();
 
-// Screenshot staging: no loop, no input — stage the scene, settle it with
-// a fixed number of steps, paint it, and signal readiness.
-if (shot) {
-  const nullInput = {
-    // Hold the throttle only while the player is in a car, so a staged
-    // chase is still moving when the screenshot is taken; on foot the
-    // player stays exactly where the shot put them.
-    down: (action) => action === 'up' && !!world.player.inCar,
-    pressed: () => false,
-    aimWorld: () => ({ x: world.player.x, y: world.player.y }),
-    endFrame: () => {},
-  };
-  if (stageShot(world, shot)) {
-    for (let i = 0; i < 45; i += 1) updateWorld(world, nullInput, STEP);
+    // Aim from the mouse, in world coordinates.
+    const aim = input.aimWorld(world.camera, renderer.view);
+    const gameInput = {
+      held: (code) => input.held(code),
+      pressed: (code) => input.pressed(code),
+      aimX: aim.x,
+      aimY: aim.y,
+      mouseDown: input.mouseDown,
+    };
+
+    acc += dt;
+    let steps = 0;
+    while (acc >= STEP && steps < 20) {
+      updateWorld(world, gameInput, STEP);
+      acc -= STEP;
+      steps += 1;
+    }
+    if (steps >= 20) acc = 0;
+    drainEvents();
+
+    // Audio follows the driving speed + wanted level.
+    const car = world.player.inCar;
+    audio.update({
+      speed: car ? Math.abs(car.speed) : 0,
+      wantedStars: wantedStars(world),
+      playing: world.screen === SCREEN_PLAY,
+    });
+
+    // Autosave while playing.
+    if (world.screen === SCREEN_PLAY) {
+      autosaveT += dt;
+      if (autosaveT >= AUTOSAVE_EVERY) {
+        autosaveT = 0;
+        writeSave(world);
+      }
+    }
+
+    renderer.render(world);
+    input.endFrame();
+    requestAnimationFrame(frame);
+  }
+
+  if (shot) {
+    stageShot(world, shot);
+    // Settle the staged scene with fixed steps, then signal readiness.
+    const fakeInput = {
+      held: () => false,
+      pressed: () => false,
+      aimX: world.player.x + 100,
+      aimY: world.player.y,
+      mouseDown: false,
+    };
+    for (let i = 0; i < 45; i++) updateWorld(world, fakeInput, STEP);
     world.events.length = 0;
     window.__shotReady = true;
-    // Repaint every frame: a resize (for example from the screenshot
-    // tool's metrics override) clears the canvas, and the staged scene
-    // must survive it. The world is settled, so each frame is identical.
-    const paint = () => {
-      renderer.render(world, SCREEN_PLAY);
-      requestAnimationFrame(paint);
-    };
-    paint();
-  } else {
-    window.__errors.push(`unknown shot: ${shot}`);
+    shotSettled = true;
   }
-} else {
-  setStatus('Cinder Bay title screen');
-  requestAnimationFrame((now) => {
-    lastNow = now;
-    requestAnimationFrame(frame);
-  });
+
+  setStatus('Solmar Bay loaded. Press Enter to start.');
+  requestAnimationFrame(frame);
 }
+
+main();
