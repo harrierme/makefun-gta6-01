@@ -1,253 +1,270 @@
-// The story: five jobs for Milo Kade, a driver back in Solmar City after three
-// years away, working for fixer Lena Cruz. Each mission is a list of stages;
-// the engine below starts them, watches for stage completion, pays out and
-// unlocks the next one. Nothing here names a real game or its characters.
-import { LANDMARKS, MISSION_REWARDS } from './config.js';
+// The story: five jobs for fixer Mara Quinn, in order. Each job is a list
+// of steps; a step is one verb — go somewhere, pick someone up, shoot a
+// number of gang members, collect a number of drops — and the module
+// advances the job as the player finishes them. Nothing here draws or
+// listens to keys; world.js calls updateMission once a step and reads the
+// objective text and the target blip for the HUD and the minimap.
 
-export const MISSIONS = [
+import { ENEMY } from './config.js';
+import { pointInBuilding } from './city.js';
+import { makeEnemy } from './entities.js';
+
+export const MARA = { name: 'Mara Quinn', x: 320, y: 350 };
+export const SAFEHOUSE = { x: 500, y: 2000, label: 'Safehouse' };
+export const BANK = { name: 'Cinder Bay Bank', x: 1945, y: 1530 };
+export const MARINA_ESCAPE = { x: 2700, y: 2050, label: 'Marina getaway boat' };
+
+const HOTEL_DROP = { x: 2280, y: 800, label: 'Grand Cinder Hotel' };
+const BEACH_FIGHT = { x: 2960, y: 1250, label: 'The Strand' };
+const DROP_SPOTS = [
+  { x: 1500, y: 1500, label: 'Bank alley cash' },
+  { x: 1200, y: 1200, label: 'Willow Park cash' },
+  { x: 2700, y: 1980, label: 'Marina cash' },
+];
+
+const MISSION_DEFS = [
   {
-    id: 'first-shift',
-    title: 'First Shift',
-    giver: 'Lena Cruz',
-    brief: 'Lena needs a package run to the Marina. Get to her garage, then drive it over. No cops, no fuss.',
-    reward: MISSION_REWARDS[0],
-    stages: [
-      { type: 'goto', x: LANDMARKS.garage.x, y: LANDMARKS.garage.y, radius: 70, text: 'Get to Lena\'s Garage' },
-      { type: 'driveTo', x: LANDMARKS.marina.x, y: LANDMARKS.marina.y, radius: 80, text: 'Deliver the package to the Marina Docks', time: 75 },
+    id: 'favor',
+    reward: 400,
+    name: 'A Favor for Mara',
+    start: { x: 2050, y: 1150, label: 'Mara Quinn' },
+    intro: 'Mara Quinn needs a package at the Grand Cinder Hotel. No questions, no detours.',
+    steps: [
+      { kind: 'go', x: HOTEL_DROP.x, y: HOTEL_DROP.y, r: 80, text: 'Deliver the package to the Grand Cinder Hotel' },
     ],
   },
   {
-    id: 'hot-wheels',
-    title: 'Hot Wheels',
-    giver: 'Lena Cruz',
-    brief: 'A crew needs wheels and the SCPD is already sniffing. Grab any car, pick up the crew at the Pier, then lose the heat at the Safehouse.',
-    reward: MISSION_REWARDS[1],
-    stages: [
-      { type: 'getCar', text: 'Steal a car — any car will do' },
-      { type: 'driveTo', x: LANDMARKS.pier.x, y: LANDMARKS.pier.y, radius: 80, text: 'Pick up the crew at Sunset Pier', wanted: 2 },
-      { type: 'escape', x: LANDMARKS.safehouse.x, y: LANDMARKS.safehouse.y, radius: 90, text: 'Lose the cops — reach the Safehouse' },
+    id: 'getaway',
+    reward: 900,
+    name: 'The Getaway',
+    start: { x: 350, y: 250, label: 'Old Foundry' },
+    intro: 'Mara is pinned down in the Old Foundry. Pick her up and get her to the safehouse — the CBPD will be on you.',
+    steps: [
+      { kind: 'pickup', x: MARA.x, y: MARA.y, r: 70, text: 'Pick up Mara Quinn in the Old Foundry' },
+      { kind: 'escape', x: SAFEHOUSE.x, y: SAFEHOUSE.y, r: 90, text: 'Drive Mara to the Harborview safehouse — lose the heat on the way' },
     ],
   },
   {
-    id: 'beachfront-brawl',
-    title: 'Beachfront Brawl',
-    giver: 'Lena Cruz',
-    brief: 'The Coral Kings are muscling in on Palmera Beach Club. Lena wants them gone. Bring the pistol and settle it.',
-    reward: MISSION_REWARDS[2],
-    stages: [
-      { type: 'goto', x: LANDMARKS.beachClub.x, y: LANDMARKS.beachClub.y, radius: 80, text: 'Get to Palmera Beach Club' },
-      { type: 'kill', count: 6, x: LANDMARKS.beachClub.x, y: LANDMARKS.beachClub.y, radius: 320, text: 'Clear out the Coral Kings (0/6)' },
+    id: 'strand',
+    reward: 1200,
+    name: 'Trouble on the Strand',
+    start: { x: 2900, y: 1150, label: 'The Strand' },
+    intro: 'The Harbor Rats are shaking down the beach bars. Clear them out — all six.',
+    steps: [
+      { kind: 'kill', count: 6, area: BEACH_FIGHT, text: 'Take out the Harbor Rats on the Strand (0/6)' },
     ],
   },
   {
-    id: 'the-collector',
-    title: 'The Collector',
-    giver: 'Dario Fontaine',
-    brief: 'Dario stashed six cash drops around the city before he skipped town. Find them all before his old friends do. Two minutes.',
-    reward: MISSION_REWARDS[3],
-    stages: [
-      { type: 'collect', count: 6, time: 120, text: 'Collect the cash drops (0/6)' },
+    id: 'drops',
+    reward: 1500,
+    name: 'Three Drops',
+    start: { x: 1500, y: 800, label: 'Civic Center' },
+    intro: 'Three cash drops, three corners of the city, three minutes. Mara is counting on you.',
+    steps: [
+      { kind: 'collect', count: 3, spots: DROP_SPOTS, time: 180, text: 'Collect the three cash drops (0/3)' },
     ],
   },
   {
-    id: 'solmar-heist',
-    title: 'Solmar Heist',
-    giver: 'Lena Cruz',
-    brief: 'The big one. Solmar Trust Bank, broad daylight. Grab the vault cash, then outrun a four-star response to the Safehouse.',
-    reward: MISSION_REWARDS[4],
-    stages: [
-      { type: 'goto', x: LANDMARKS.bank.x, y: LANDMARKS.bank.y, radius: 80, text: 'Get to Solmar Trust Bank' },
-      { type: 'hold', seconds: 5, x: LANDMARKS.bank.x, y: LANDMARKS.bank.y, radius: 70, text: 'Crack the vault — stay at the bank' },
-      { type: 'escape', x: LANDMARKS.safehouse.x, y: LANDMARKS.safehouse.y, radius: 90, text: 'Escape the four-star heat — reach the Safehouse', wanted: 4 },
+    id: 'cinder-job',
+    reward: 5000,
+    name: 'The Cinder Job',
+    start: { x: 1800, y: 1650, label: 'Cinder Bay Bank' },
+    intro: 'The big one. Hit the Cinder Bay Bank, grab the vault cash and vanish at the marina. Four stars, no mistakes.',
+    steps: [
+      { kind: 'kill', count: 4, area: { x: BANK.x, y: BANK.y, label: 'Cinder Bay Bank' }, text: 'Deal with the bank guards (0/4)' },
+      { kind: 'collect', count: 1, spots: [{ x: BANK.x, y: BANK.y, label: 'Vault cash' }], text: 'Grab the vault cash' },
+      { kind: 'escape', x: MARINA_ESCAPE.x, y: MARINA_ESCAPE.y, r: 90, text: 'Escape to the marina getaway boat — the whole CBPD is coming' },
     ],
   },
 ];
 
-/** Where the next mission starts: the garage marker while jobs remain. */
-export function nextMissionIndex(state) {
-  return state.missionsDone;
+export function missionCount() {
+  return MISSION_DEFS.length;
 }
 
-export function startMarker(state) {
-  if (state.missionsDone >= MISSIONS.length) return null;
-  return { x: LANDMARKS.garage.x, y: LANDMARKS.garage.y, label: 'L' };
+export function missionDef(index) {
+  return MISSION_DEFS[index] ?? null;
 }
 
-export function startMission(state, index) {
-  const def = MISSIONS[index];
-  if (!def) return false;
-  state.mission = {
-    index,
-    def,
-    stageIndex: 0,
-    active: true,
-    failed: false,
+/** The start marker of the next unfinished job, or null when the story is done. */
+export function nextMissionStart(state) {
+  const def = missionDef(state.mission.index);
+  return def ? def.start : null;
+}
+
+export function freshMissionState() {
+  return {
+    index: 0, // next job to start
+    active: false,
+    stepIndex: 0,
+    objective: '',
+    target: null, // {x, y, r, label} for the HUD arrow and the minimap blip
     timer: 0,
-    kills: 0,
+    killsLeft: 0,
     collected: 0,
-    holdTime: 0,
-    spawned: false,
+    toCollect: 0,
+    maraWithPlayer: false,
+    done: [false, false, false, false, false],
   };
-  state.dialogue = { speaker: def.giver, text: def.brief, until: state.time + 6 };
-  state.message = `MISSION: ${def.title}`;
-  state.messageUntil = state.time + 3.5;
-  enterStage(state);
-  return true;
 }
 
-export function enterStage(state) {
-  const m = state.mission;
-  const stage = m.def.stages[m.stageIndex];
-  if (!stage) return;
-  m.timer = stage.time || 0;
-  m.kills = 0;
-  m.collected = 0;
-  m.holdTime = 0;
-  m.spawned = false;
-  if (stage.wanted) state.wanted = Math.max(state.wanted, stage.wanted);
-  if (stage.type === 'kill') {
-    // Spawn the gang around the fight.
-    for (let i = 0; i < stage.count; i += 1) {
-      const a = (i / stage.count) * Math.PI * 2;
-      state.enemies.push({
-        x: stage.x + Math.cos(a) * (140 + (i % 3) * 60),
-        y: stage.y + Math.sin(a) * (140 + (i % 3) * 60),
-        angle: 0,
-        hp: 60,
-        shootTimer: 0.8 + i * 0.35,
-        state: 'fight',
-        dead: false,
-        flash: 0,
-      });
+function setObjective(state, text, target) {
+  state.mission.objective = text;
+  state.mission.target = target ?? null;
+}
+
+function spawnGang(state, area, count) {
+  for (let i = 0; i < count; i += 1) {
+    // A ring around the area, far enough out that the player gets a moment
+    // to react — but never inside a building: walk the radius inward until
+    // the spot is open ground.
+    const angle = (i / count) * Math.PI * 2;
+    let x = area.x;
+    let y = area.y;
+    for (let radius = 280; radius >= 100; radius -= 20) {
+      const tryX = area.x + Math.cos(angle) * radius;
+      const tryY = area.y + Math.sin(angle) * radius;
+      if (tryX < 40 || tryX > 3080 || tryY < 40 || tryY > 2360) continue;
+      if (pointInBuilding(state.city, tryX, tryY)) continue;
+      x = tryX;
+      y = tryY;
+      break;
     }
-    m.spawned = true;
-  }
-  if (stage.type === 'collect') {
-    const spots = [
-      { x: 800, y: 300 }, { x: 2000, y: 700 }, { x: 1200, y: 1900 },
-      { x: 2800, y: 1100 }, { x: 400, y: 1500 }, { x: 2400, y: 2200 },
-    ];
-    for (const s of spots) {
-      state.pickups.push({ x: s.x, y: s.y, kind: 'cash', amount: 150, mission: true, bob: 0 });
-    }
-    m.spawned = true;
+    const enemy = makeEnemy(x, y);
+    enemy.id = state.nextId;
+    state.nextId += 1;
+    state.enemies.push(enemy);
   }
 }
 
-function advanceStage(state) {
-  const m = state.mission;
-  m.stageIndex += 1;
-  if (m.stageIndex >= m.def.stages.length) {
-    completeMission(state);
-    return;
+function spawnDrops(state, spots) {
+  for (const spot of spots) {
+    state.pickups.push({ x: spot.x, y: spot.y, kind: 'cash', label: spot.label, amount: 0 });
   }
-  enterStage(state);
 }
 
-function completeMission(state) {
-  const m = state.mission;
-  const reward = m.def.reward;
-  state.money += reward;
-  state.missionsDone += 1;
-  state.mission = null;
-  state.message = `MISSION COMPLETE: ${m.def.title}  +$${reward}`;
-  state.messageUntil = state.time + 4;
-  state.dialogue = { speaker: 'Lena Cruz', text: 'Clean work, Milo. The money is yours — come see me when you want the next one.', until: state.time + 5 };
-  state.audio.missionComplete();
-  state.save();
-}
-
-export function failMission(state, reason) {
-  const m = state.mission;
-  if (!m) return;
-  state.mission = null;
-  state.enemies = state.enemies.filter((e) => e.dead);
-  state.pickups = state.pickups.filter((p) => !p.mission);
-  state.message = `MISSION FAILED: ${m.def.title} — ${reason}`;
-  state.messageUntil = state.time + 4;
-  state.audio.missionFail();
-}
-
-function stageText(state) {
-  const m = state.mission;
-  const stage = m.def.stages[m.stageIndex];
-  if (stage.type === 'kill') return `Clear out the Coral Kings (${m.kills}/${stage.count})`;
-  if (stage.type === 'collect') return `Collect the cash drops (${m.collected}/${stage.count})`;
-  if (stage.type === 'hold') return `Crack the vault — stay at the bank (${Math.ceil(stage.seconds - m.holdTime)}s)`;
-  return stage.text;
-}
-
-export function missionObjectiveText(state) {
-  if (!state.mission) {
-    if (state.missionsDone >= MISSIONS.length) return 'All jobs done — Solmar City is yours. Free roam!';
-    return `Go to Lena's Garage (L) to start: ${MISSIONS[state.missionsDone].title}`;
+/** Begin step `stepIndex` of the active job: set the objective, spawn what it needs. */
+function enterStep(state, stepIndex) {
+  const def = missionDef(state.mission.index);
+  const step = def.steps[stepIndex];
+  state.mission.stepIndex = stepIndex;
+  if (step.kind === 'go' || step.kind === 'pickup' || step.kind === 'escape') {
+    setObjective(state, step.text, { x: step.x, y: step.y, r: step.r, label: step.label ?? def.name });
+    if (step.kind === 'escape' && def.id === 'getaway') state.wanted = Math.max(state.wanted, 2);
+    if (step.kind === 'escape' && def.id === 'cinder-job') state.wanted = Math.max(state.wanted, 4);
+  } else if (step.kind === 'kill') {
+    state.mission.killsLeft = step.count;
+    state.mission.toCollect = step.count;
+    setObjective(state, step.text, { x: step.area.x, y: step.area.y, r: 160, label: step.area.label });
+    spawnGang(state, step.area, step.count);
+  } else if (step.kind === 'collect') {
+    state.mission.collected = 0;
+    state.mission.toCollect = step.count;
+    setObjective(state, step.text, { x: step.spots[0].x, y: step.spots[0].y, r: 90, label: step.spots[0].label });
+    spawnDrops(state, step.spots);
+    if (step.time) state.mission.timer = step.time;
   }
-  return stageText(state);
 }
 
-export function missionMarker(state) {
-  if (!state.mission) return startMarker(state);
-  const m = state.mission;
-  const stage = m.def.stages[m.stageIndex];
-  if (!stage) return null;
-  if (stage.type === 'getCar') return null;
-  if (stage.type === 'collect') {
-    const next = state.pickups.find((p) => p.mission);
-    return next ? { x: next.x, y: next.y, label: '$' } : null;
-  }
-  return { x: stage.x, y: stage.y, label: '!' };
+/** Start the next job. Returns its intro line for the HUD. */
+export function startMission(state) {
+  const def = missionDef(state.mission.index);
+  if (!def) return null;
+  state.mission.active = true;
+  state.mission.maraWithPlayer = false;
+  enterStep(state, 0);
+  return def.intro;
 }
 
-/** Advance the mission state machine one step; returns nothing. */
+function finishMission(state) {
+  const def = missionDef(state.mission.index);
+  state.money += def.reward;
+  state.mission.done[state.mission.index] = true;
+  state.mission.index += 1;
+  state.mission.active = false;
+  state.mission.objective = '';
+  state.mission.target = null;
+  state.mission.maraWithPlayer = false;
+  return def;
+}
+
+function distance(ax, ay, bx, by) {
+  return Math.hypot(ax - bx, ay - by);
+}
+
+/**
+ * Advance the active job one step. Returns 'done' when a job is completed,
+ * 'step' when a step is completed, 'fail' when a timed job runs out, else ''.
+ */
 export function updateMission(state, dt) {
-  const m = state.mission;
-  if (!m) {
-    // Standing on the start marker begins the next job.
-    const marker = startMarker(state);
-    if (marker) {
-      const p = state.playerCar || state.player;
-      if (Math.hypot(p.x - marker.x, p.y - marker.y) < 70) startMission(state, state.missionsDone);
-    }
-    return;
-  }
-  const stage = m.def.stages[m.stageIndex];
-  if (!stage) return;
-  if (m.timer > 0) {
-    m.timer -= dt;
-    if (m.timer <= 0) {
-      failMission(state, 'Out of time');
-      return;
-    }
-  }
-  const p = state.playerCar || state.player;
-  const dist = stage.x !== undefined ? Math.hypot(p.x - stage.x, p.y - stage.y) : Infinity;
-  if (stage.type === 'goto' || stage.type === 'driveTo' || stage.type === 'escape') {
-    if (stage.type === 'driveTo' && !state.playerCar) {
-      // Waiting for the player to get in a car; nothing to do.
-    } else if (dist < stage.radius) {
-      if (stage.type === 'escape' && state.wanted > 0 && dist > 40) {
-        // Must actually arrive while still hot.
-      }
-      advanceStage(state);
-      return;
-    }
-  } else if (stage.type === 'getCar') {
-    if (state.playerCar) advanceStage(state);
-  } else if (stage.type === 'kill') {
-    if (m.kills >= stage.count) advanceStage(state);
-  } else if (stage.type === 'collect') {
-    if (m.collected >= stage.count) advanceStage(state);
-  } else if (stage.type === 'hold') {
-    if (dist < stage.radius) {
-      m.holdTime += dt;
-      if (m.holdTime >= stage.seconds) {
-        state.money += 1200;
-        state.message = 'VAULT CASH SECURED +$1200 — RUN!';
-        state.messageUntil = state.time + 3;
-        advanceStage(state);
-      }
-    } else {
-      m.holdTime = Math.max(0, m.holdTime - dt * 2);
+  const mission = state.mission;
+  if (!mission.active) return '';
+  const def = missionDef(mission.index);
+  const step = def.steps[mission.stepIndex];
+  const player = state.player;
+  const px = player.onFoot ? player.x : player.car.x;
+  const py = player.onFoot ? player.y : player.car.y;
+
+  if (step.kind === 'collect' && step.time) {
+    mission.timer -= dt;
+    if (mission.timer <= 0) {
+      mission.active = false;
+      mission.objective = '';
+      mission.target = null;
+      state.pickups.length = 0;
+      state.enemies.length = 0;
+      return 'fail';
     }
   }
+
+  if (step.kind === 'go' || step.kind === 'pickup' || step.kind === 'escape') {
+    if (distance(px, py, step.x, step.y) <= step.r) {
+      if (step.kind === 'pickup') mission.maraWithPlayer = true;
+      return advanceStep(state);
+    }
+    return '';
+  }
+
+  if (step.kind === 'kill') {
+    const done = mission.toCollect - mission.killsLeft;
+    mission.objective = step.text.replace(/\(\d+\/\d+\)/, `(${done}/${mission.toCollect})`);
+    if (mission.killsLeft <= 0) return advanceStep(state);
+    return '';
+  }
+
+  if (step.kind === 'collect') {
+    const done = mission.collected;
+    mission.objective = step.text.replace(/\(\d+\/\d+\)/, `(${done}/${mission.toCollect})`);
+    if (mission.collected >= mission.toCollect) return advanceStep(state);
+    return '';
+  }
+  return '';
 }
+
+function advanceStep(state) {
+  const def = missionDef(state.mission.index);
+  const next = state.mission.stepIndex + 1;
+  if (next >= def.steps.length) {
+    finishMission(state);
+    return 'done';
+  }
+  enterStep(state, next);
+  return 'step';
+}
+
+/** Called by the world when the player shoots an enemy dead during a kill step. */
+export function noteKill(state) {
+  if (state.mission.active && state.mission.killsLeft > 0) state.mission.killsLeft -= 1;
+}
+
+/** Called by the world when the player walks over a cash pickup. */
+export function notePickup(state) {
+  if (state.mission.active) state.mission.collected += 1;
+}
+
+/** The seconds left on a timed step, or 0. */
+export function missionTimer(state) {
+  return state.mission.timer;
+}
+
+export { ENEMY };

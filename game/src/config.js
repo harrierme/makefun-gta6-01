@@ -1,80 +1,137 @@
-// Solmar City — tuning numbers, world layout and palettes in one place.
-// The city is a fixed 3200x2400 world: a grid of roads, a beach and ocean on
-// the west edge, downtown in the middle, a park, a marina and suburbs.
-export const STEP = 1 / 60;
-export const WORLD = { width: 3200, height: 2400 };
-export const ROAD_W = 96;
-export const ROAD_XS = [400, 800, 1200, 1600, 2000, 2400, 2800];
-export const ROAD_YS = [300, 700, 1100, 1500, 1900, 2200];
-export const OCEAN_X = 300; // x < 300 is water; 300..352 is sand
-export const SAND_X = 352;
-export const SAVE_KEY = 'solmar-city-save-v1';
+// Cinder Bay — every tuning number and colour in one place.
+// The world is a fixed 3200 x 2400 city; the renderer scales the camera
+// view to the window, so no rule below depends on the screen size.
 
-// Districts, by rectangle, for ground colour and building style.
-export const DISTRICTS = [
-  { name: 'Ocean Beach', x: 0, y: 0, w: 400, h: 2400, ground: '#e8c98f', kind: 'beach' },
-  { name: 'Downtown', x: 1200, y: 700, w: 800, h: 800, ground: '#8f8f7d', kind: 'downtown' },
-  { name: 'Marina', x: 2000, y: 1900, w: 1200, h: 500, ground: '#7d8a6a', kind: 'marina' },
-  { name: 'Old Town', x: 400, y: 300, w: 800, h: 800, ground: '#a89a7c', kind: 'oldtown' },
-  { name: 'Hills', x: 2400, y: 0, w: 800, h: 700, ground: '#7f9155', kind: 'hills' },
-];
+export const WORLD = { width: 3200, height: 2400 };
+
+// Roads: a grid of avenues (vertical) and streets (horizontal). The beach
+// and ocean sit east of the last avenue; the marina hugs the south-east.
+export const ROADS = {
+  avenues: [200, 600, 1000, 1400, 1800, 2200, 2600],
+  streets: [200, 600, 1000, 1400, 1800, 2200],
+  width: 76,
+  lane: 20,
+};
+
+export const BEACH = { x: 2830, oceanX: 3020 };
+
+/** The simulation's fixed step, in seconds: 60 updates a second. */
+export const STEP = 1 / 60;
+
+/** One in-game hour lasts this many real seconds. */
+export const HOUR_SECONDS = 90;
 
 export const PLAYER = {
-  walkSpeed: 175,
-  runSpeed: 285,
   radius: 13,
-  maxHealth: 100,
+  walkSpeed: 165,
+  runSpeed: 265,
+  health: 100,
+  // Health trickles back only after this many seconds without taking a hit.
+  regenDelay: 6,
+  regenRate: 4,
+};
+
+export const GUN = {
+  magSize: 12,
+  reloadSeconds: 1.1,
+  bulletSpeed: 950,
+  bulletRange: 620,
+  damage: 1,
+  // Seconds between shots while the trigger is held.
+  fireInterval: 0.16,
+  spread: 0.045,
 };
 
 export const CAR = {
-  accel: 980,
-  brake: 1500,
-  reverseMax: 200,
-  maxSpeed: 560,
-  turnRate: 2.9,
+  length: 46,
+  width: 22,
+  accel: 420,
+  reverseAccel: 260,
+  maxSpeed: 520,
+  maxReverse: 160,
+  // Steering at full speed is gentler than at a crawl.
+  steerRate: 2.6,
   grip: 6.5,
-  radius: 22,
-  maxHp: 100,
+  handbrakeGrip: 1.4,
+  drag: 0.55,
+  offRoadDrag: 1.9,
+  health: 100,
+  // A crash harder than this hurts the driver too.
+  hardCrashSpeed: 300,
 };
 
-export const TRAFFIC = { count: 34, minSpeed: 150, maxSpeed: 250 };
-export const PEDS = { count: 46 };
-export const POLICE = { maxCars: 5, chaseSpeed: 520, bustTime: 1.2 };
-
-export const WEAPON = {
-  pistol: { damage: 34, range: 430, fireInterval: 0.24, mag: 12, reloadTime: 1.15, spread: 0.045 },
+export const TRAFFIC = {
+  count: 16,
+  speed: 150,
+  speedJitter: 55,
+  spawnMargin: 120,
 };
 
-export const WANTED = { decayDelay: 10, decayInterval: 8, max: 5 };
+export const PEDS = { count: 26, walkSpeed: 55, fleeSpeed: 150 };
 
-export const COLORS = {
-  asphalt: '#3a3a40',
-  asphaltLight: '#44444c',
-  sidewalk: '#9a9a8e',
-  lane: '#e8d44d',
-  curb: '#c9c9bd',
-  grass: '#6f9e4f',
-  parkGrass: '#5d8f43',
-  sand: '#e8c98f',
-  water: '#2a7fa8',
-  waterDeep: '#1d5f86',
-  buildingDowntown: ['#5b6b7a', '#6e7f8f', '#4a5a68', '#7a8ba0', '#3f4c5c'],
-  buildingSuburb: ['#c98f6b', '#d9a05b', '#b07a5e', '#e0b184', '#8fa3b0', '#a8b08a'],
-  buildingOld: ['#c9a06b', '#b98a5e', '#d4b183', '#a87f56'],
-  carColors: ['#c0392b', '#2980b9', '#f1c40f', '#ecf0f1', '#2c3e50', '#e67e22', '#8e44ad', '#16a085', '#7f8c8d', '#d35400'],
-  palm: '#3f7d3a',
+export const WANTED = {
+  max: 5,
+  // Seconds with no cop in sight and no fresh crime before one star fades.
+  coolOffSeconds: 9,
+  stealCarStars: 1,
+  shootStars: 1,
+  killCopStars: 2,
+  // How many police cars are out hunting at each star level.
+  carsForStars: [0, 1, 2, 3, 4, 4],
+  footCopsForStars: [0, 1, 1, 2, 2, 3],
 };
 
-export const MISSION_REWARDS = [400, 900, 1400, 1800, 5000];
-
-// Landmarks: named places the story and the HUD point at.
-export const LANDMARKS = {
-  garage: { x: 1400, y: 1700, label: "Lena's Garage" },
-  safehouse: { x: 1000, y: 2050, label: 'Safehouse' },
-  hospital: { x: 2200, y: 500, label: 'Solmar General' },
-  policeHq: { x: 1800, y: 900, label: 'SCPD HQ' },
-  bank: { x: 1600, y: 1300, label: 'Solmar Trust Bank' },
-  marina: { x: 2600, y: 2050, label: 'Marina Docks' },
-  beachClub: { x: 400, y: 900, label: 'Palmera Beach Club' },
-  pier: { x: 2600, y: 2250, label: 'Sunset Pier' },
+export const COP = {
+  footSpeed: 185,
+  // Seconds a foot cop must stay touching the player to make the bust.
+  bustSeconds: 1.2,
+  // Well below the player's top speed, so a straight getaway pulls away.
+  carSpeed: 440,
 };
+
+export const ENEMY = { health: 3, speed: 120, shootRange: 420, shootInterval: 2.2, spread: 0.24, bulletDamage: 4 };
+
+export const MISSIONS = [
+  { id: 'favor', name: 'A Favor for Mara', reward: 400 },
+  { id: 'getaway', name: 'The Getaway', reward: 900 },
+  { id: 'strand', name: 'Trouble on the Strand', reward: 1200 },
+  { id: 'drops', name: 'Three Drops', reward: 1500 },
+  { id: 'cinder-job', name: 'The Cinder Job', reward: 5000 },
+];
+
+export const PALETTE = {
+  grass: '#4d7a3f',
+  grassDark: '#436e38',
+  road: '#3a3d46',
+  roadEdge: '#2c2e36',
+  roadLine: '#d8c95a',
+  sidewalk: '#8d8578',
+  sand: '#d9c184',
+  ocean: '#1d5f8a',
+  oceanDeep: '#15507a',
+  park: '#3f6b34',
+  buildingRoof: '#6b5a4e',
+  buildingRoofAlt: '#7a6a58',
+  buildingRoofDark: '#54463c',
+  nightOverlay: 'rgba(8, 12, 40, 0.55)',
+  duskOverlay: 'rgba(255, 120, 40, 0.10)',
+  player: '#e8b23a',
+  playerShirt: '#c94f3d',
+  copCar: '#2f6fb2',
+  copCarWhite: '#e8e8e8',
+  hudPanel: 'rgba(10, 12, 18, 0.72)',
+  hudText: '#f2f0e8',
+  hudMuted: '#b9b4a4',
+  hudGold: '#f2c94c',
+  hudRed: '#e5534b',
+  hudGreen: '#7dc383',
+  mission: '#f2c94c',
+  policeBlip: '#5aa2ff',
+  enemyBlip: '#ff5a4e',
+  text: '#f2f0e8',
+};
+
+export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+
+/** Where the autosave lives between visits (this browser only). */
+export const SAVE_KEY = 'cinder-bay.save.v1';

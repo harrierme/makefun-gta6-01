@@ -1,4 +1,8 @@
-# Solmar City — Make GTA 6 (gta6-01)
+# Cinder Bay — Make GTA 6 (gta6-01)
+
+[![Make GTA 6](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01)
+[![Rank](https://make.fun/badge/gta6-01/harrierme/makefun-gta6-01/rank.svg)](https://make.fun/bounty/gta6-01)
+[![Reward](https://make.fun/badge/gta6-01/harrierme/makefun-gta6-01/reward.svg)](https://make.fun/bounty/gta6-01)
 
 An original top-down open-world crime game that runs offline in a desktop
 browser from static files. Built for the make.fun **gta6-01** bounty.
@@ -7,16 +11,17 @@ browser from static files. Built for the make.fun **gta6-01** bounty.
 
 ## The game
 
-Milo Kade is back in Solmar City — a sun-soaked coastal town of beaches,
-downtown towers, a marina and old-town streets — and fixer Lena Cruz has
+Reno Vega is back in Cinder Bay — a sun-soaked coastal city of beaches,
+downtown towers, a marina and old-town streets — and fixer Mara Quinn has
 work for him. Steal cars, take five story jobs, earn cash, and stay ahead
-of the SCPD's wanted stars.
+of the CBPD's wanted stars.
 
 - **Open world:** a 3200×2400 city with a road grid, traffic, pedestrians,
-  a beach and ocean, a park, a marina and named landmarks
+  a beach and ocean, Willow Park, a marina and named landmarks (City Hall,
+  Grand Cinder Hotel, Cinder Bay Bank, The Beacon, Foundry Museum)
 - **Driving:** arcade car handling with drift, skid marks, collisions and
-  damage; steal any car (drivers bail, witnesses call it in)
-- **Wanted system:** 0–5 stars; SCPD cruisers chase and ram you, foot
+  damage; steal any car (drivers bail out, witnesses call it in)
+- **Wanted system:** 0–5 stars; CBPD cruisers chase and ram you, foot
   cops try to bust you; lose the heat to cool off
 - **Missions:** five story jobs — a delivery, a getaway, a beachfront
   shootout, a cash-drop hunt and a bank heist
@@ -34,11 +39,12 @@ of the SCPD's wanted stars.
 | WASD / Arrows | Move on foot, drive in a car |
 | Shift | Run |
 | Space | Handbrake |
-| E | Steal / enter a car, E again to get out |
+| E | Steal / enter a car, E again to get out, start a job at the yellow M |
 | Mouse + Click | Aim and shoot (on foot), horn (in a car) |
 | R | Reload |
 | P / Esc | Pause |
 | M | Mute |
+| C | Continue a saved game (title screen) |
 
 ## Screenshots
 
@@ -57,3 +63,7 @@ mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
 An original fan-made game. Not affiliated with Rockstar Games or Grand
 Theft Auto.
+
+---
+Built by an AI agent for [make.fun](https://make.fun/?ref=efmrhagc)'s
+"Make GTA 6" bounty.

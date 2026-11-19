@@ -1,230 +1,137 @@
 // The screenshot scenes behind ?shot=chase|mission|beach|downtown. Each one
-// sets up a real game state (a mission in progress, a wanted level, police
-// already chasing), then plays the real rules forward for a few seconds with
-// a simple autopilot — steering down the road, or aiming at the nearest gang
-// member — so the frame is what a short game really looks like, and the same
-// seed always gives the same frame.
+// plays the real rules forward from a fresh world for a fixed number of
+// steps, steered by a tiny scripted driver, so the frame is what a short
+// game really looks like — and the same seed always gives the same frame.
+// The runner paints the staged world twice and sets window.__shotReady.
+
 import { STEP } from './config.js';
-import { LANDMARKS } from './config.js';
-import { MISSIONS, enterStage, startMission } from './missions.js';
-import { addWanted, stepWorld } from './world.js';
-import { makeCar } from './entities.js';
+import { SCREEN_PLAY } from './render.js';
+import { startMission } from './missions.js';
 
-const TAU = Math.PI * 2;
-
-function wrapAngle(a) {
-  while (a > Math.PI) a -= TAU;
-  while (a < -Math.PI) a += TAU;
-  return a;
-}
-
-/** A fake input the autopilot drives: a held-key set it rewrites every step. */
-function fakeInput() {
-  const held = new Set();
+function blankInput() {
   return {
-    held,
-    mouse: { x: 640, y: 360, down: false, clicked: false },
-    is(action) {
-      return held.has(action);
-    },
-    wasPressed() {
-      return false;
-    },
-    endFrame() {},
+    moveX: 0, moveY: 0, run: false, handbrake: false,
+    interact: false, reload: false, shooting: false,
+    aimWorldX: 0, aimWorldY: 0,
   };
 }
 
-/**
- * Steer the player's car along a road. `heading` is the travel angle (0 for
- * east, PI/2 for south) and `lane` the lane's coordinate on the perpendicular
- * axis (a y for east/west, an x for north/south). `nav` is a small per-scene
- * state that remembers when the car is stuck: a stuck car reverses straight
- * out for a moment, then carries on.
- */
-function driveRoad(state, input, heading, lane, nav) {
-  const car = state.playerCar;
-  if (!car) return;
-  // Stuck detection: barely moving while trying to drive.
-  if (Math.abs(car.speed) < 50) nav.stuck += 1 / 60;
-  else nav.stuck = 0;
-  if (nav.stuck > 0.4 && !nav.reversing) {
-    nav.reversing = true;
-    nav.reverseT = 0.7;
-  }
-  if (nav.reversing) {
-    nav.reverseT -= 1 / 60;
-    input.held.delete('up');
-    input.held.add('down');
-    input.held.delete('left');
-    input.held.delete('right');
-    if (nav.reverseT <= 0) {
-      nav.reversing = false;
-      nav.stuck = 0;
-    }
-    return;
-  }
-  input.held.add('up');
-  input.held.delete('down');
-  input.held.delete('brake');
-  // The heading correction that points the nose back toward the lane. The
-  // sign flips between axes: near east sin(a) ~ a, near south cos(a) ~ -a.
-  const perp = heading === 0 ? car.y : car.x;
-  const correction = Math.max(-0.5, Math.min(0.5, (lane - perp) * 0.002));
-  const desired = heading === 0 ? correction : heading - correction;
-  const diff = wrapAngle(desired - car.angle);
-  input.held.delete('left');
-  input.held.delete('right');
-  if (diff > 0.06) input.held.add('right');
-  else if (diff < -0.06) input.held.add('left');
-}
-
-function putPlayerInCar(state, x, y, angle, color) {
-  const car = makeCar(x, y, angle, color, 'player');
-  car.speed = 300;
-  car.hp = 10000; // Staging only: the shot must survive its own chase.
-  state.cars.push(car);
-  state.playerCar = car;
+function putPlayerInCar(world, x, y, angle) {
+  const state = world.state;
+  const car = state.cars.find((candidate) => candidate.driver === 'traffic') ?? state.cars[0];
+  car.driver = 'player';
+  car.x = x;
+  car.y = y;
+  car.angle = angle;
+  car.vx = 0;
+  car.vy = 0;
+  car.speed = 0;
+  state.player.car = car;
+  state.player.onFoot = false;
   state.player.x = x;
   state.player.y = y;
-  state.player.angle = angle;
   return car;
 }
 
-/** Aim the fake mouse at the nearest living enemy, and hold the trigger. */
-function aimAtNearestEnemy(state, input) {
-  let best = null;
-  let bestD = Infinity;
-  for (const e of state.enemies) {
-    if (e.dead) continue;
-    const d = Math.hypot(e.x - state.player.x, e.y - state.player.y);
-    if (d < bestD) {
-      bestD = d;
-      best = e;
-    }
-  }
-  if (!best) return;
-  const cam = state.camera;
-  input.mouse.x = (best.x - cam.x) * cam.zoom + window.innerWidth / 2;
-  input.mouse.y = (best.y - cam.y) * cam.zoom + window.innerHeight / 2;
-  input.held.add('shoot');
+function driveForward(world, seconds, steer) {
+  const input = blankInput();
+  input.moveY = -1;
+  input.moveX = steer ?? 0;
+  for (let i = 0; i < seconds / STEP; i += 1) world.step(STEP, input, null);
 }
 
-function runSteps(state, input, seconds) {
-  const steps = Math.round(seconds / STEP);
-  for (let i = 0; i < steps; i += 1) {
-    stepWorld(state, input, STEP);
-    input.endFrame();
+function stageChase(world) {
+  const state = world.state;
+  state.hour = 17.3; // golden hour: warm light, sirens lit, long shadows
+  state.money = 2450;
+  const car = putPlayerInCar(world, 1400, 1650, -Math.PI / 2);
+  car.color = '#c94f3d';
+  // Three CBPD cruisers right behind, lights on.
+  for (let i = 0; i < 3; i += 1) {
+    const cruiser = world.spawnPoliceCar();
+    cruiser.x = 1400 + (i - 1) * 90;
+    cruiser.y = 1850 + i * 70;
+    cruiser.angle = -Math.PI / 2;
+    cruiser.vx = 0;
+    cruiser.vy = -200;
+    cruiser.speed = 200;
   }
+  state.wanted = 3;
+  state.sinceCrime = 0;
+  driveForward(world, 3.5, 0);
+  return { screen: SCREEN_PLAY, toast: 'Lose the heat — 3 stars', toastTimer: 4 };
+}
+
+function stageMission(world) {
+  const state = world.state;
+  state.hour = 12.5; // hard noon on the beach
+  state.money = 1820;
+  state.player.x = 2900;
+  state.player.y = 1250;
+  state.player.angle = Math.PI / 2;
+  state.camera.x = 2900;
+  state.camera.y = 1250;
+  state.mission.index = 2;
+  startMission(state);
+  // A short firefight: aim at the nearest Harbor Rat and shoot. Kept
+  // brief so the gang is still standing and the CBPD has not arrived yet.
+  const input = blankInput();
+  for (let i = 0; i < 2.5 / STEP; i += 1) {
+    const enemy = state.enemies[0];
+    if (enemy) {
+      input.aimWorldX = enemy.x;
+      input.aimWorldY = enemy.y;
+      input.shooting = true;
+    }
+    world.step(STEP, input, null);
+    input.shooting = false;
+  }
+  return { screen: SCREEN_PLAY, toast: 'Trouble on the Strand', toastTimer: 4 };
+}
+
+function stageBeach(world) {
+  const state = world.state;
+  state.hour = 17.6; // golden hour over the ocean
+  state.money = 3100;
+  state.player.x = 3000;
+  state.player.y = 900;
+  state.player.angle = Math.PI / 2;
+  state.camera.x = 3000;
+  state.camera.y = 900;
+  const car = putPlayerInCar(world, 2920, 820, Math.PI / 2);
+  car.color = '#e8b23a';
+  // Step out and admire the view on foot.
+  state.player.car = null;
+  state.player.onFoot = true;
+  car.driver = null;
+  world.step(STEP, blankInput(), null);
+  return { screen: SCREEN_PLAY, toast: '', toastTimer: 0 };
+}
+
+function stageDowntown(world) {
+  const state = world.state;
+  state.hour = 21.5; // night in Civic Center, street lights on
+  state.money = 5400;
+  const car = putPlayerInCar(world, 1400, 800, Math.PI / 2);
+  car.color = '#3d7ac9';
+  const cruiser = world.spawnPoliceCar();
+  cruiser.x = 1400;
+  cruiser.y = 600;
+  cruiser.angle = Math.PI / 2;
+  state.wanted = 1;
+  state.sinceCrime = 0;
+  driveForward(world, 1.5, 0);
+  return { screen: SCREEN_PLAY, toast: '', toastTimer: 0 };
 }
 
 /**
- * Set `state` to the named scene. Any unknown name stages the chase (the
- * cover). The state is left on the play screen, mid-action.
+ * Set `world` to the named scene (chase, mission, beach or downtown; any
+ * other name is chase) and return the screen to draw over it.
  */
-export function stageShot(name, state) {
-  const input = fakeInput();
-  state.screen = 'play';
-  state.hasSave = false;
-  if (name === 'mission') {
-    // Beachfront brawl: on foot at Palmera Beach Club, gang closing in.
-    state.clock = 16.5;
-    state.money = 1250;
-    state.player.x = LANDMARKS.beachClub.x + 40;
-    state.player.y = LANDMARKS.beachClub.y + 60;
-    startMission(state, 2);
-    state.mission.stageIndex = 1;
-    enterStage(state);
-    state.dialogue = { speaker: 'Lena Cruz', text: 'The Coral Kings are on the beach. End it, Milo.', until: state.time + 6 };
-    // Two seconds of the firefight: enemies still standing, tracers flying.
-    for (let i = 0; i < 120; i += 1) {
-      aimAtNearestEnemy(state, input);
-      stepWorld(state, input, STEP);
-      input.endFrame();
-    }
-    return;
-  }
-  if (name === 'beach') {
-    // Sunset drive down Ocean Drive with the first job running.
-    state.clock = 18.2;
-    state.money = 860;
-    putPlayerInCar(state, 376, 300, Math.PI / 2, '#ff2d78');
-    startMission(state, 0);
-    state.mission.stageIndex = 1;
-    enterStage(state);
-    state.dialogue = { speaker: 'Lena Cruz', text: 'Package is in the trunk. Marina Docks, no detours.', until: state.time + 6 };
-    const nav = { stuck: 0, reversing: false, reverseT: 0 };
-    for (let i = 0; i < 180; i += 1) {
-      driveRoad(state, input, Math.PI / 2, 376, nav);
-      stepWorld(state, input, STEP);
-      input.endFrame();
-    }
-    return;
-  }
-  if (name === 'downtown') {
-    // Dusk on foot downtown, collecting Dario's cash with one star of heat.
-    state.clock = 19.4;
-    state.money = 3120;
-    state.player.x = 1600;
-    state.player.y = 1250;
-    startMission(state, 3);
-    addWanted(state, 1, 'SCPD patrol spotted you');
-    state.dialogue = { speaker: 'Dario Fontaine', text: 'Six drops, two minutes. My old friends are watching — move.', until: state.time + 6 };
-    for (let i = 0; i < 220; i += 1) {
-      // Walk toward the nearest cash drop.
-      const target = state.pickups.filter((p) => p.mission).reduce((best, p) => {
-        const d = Math.hypot(p.x - state.player.x, p.y - state.player.y);
-        return !best || d < best.d ? { p, d } : best;
-      }, null);
-      if (target) {
-        const dx = target.p.x - state.player.x;
-        const dy = target.p.y - state.player.y;
-        input.held.delete('up');
-        input.held.delete('down');
-        input.held.delete('left');
-        input.held.delete('right');
-        if (dx > 12) input.held.add('right');
-        else if (dx < -12) input.held.add('left');
-        if (dy > 12) input.held.add('down');
-        else if (dy < -12) input.held.add('up');
-        input.held.add('run');
-      }
-      stepWorld(state, input, STEP);
-      input.endFrame();
-    }
-    return;
-  }
-  // Default: chase — the cover. Three stars, SCPD cruisers closing in,
-  // the Hot Wheels escape already running, golden hour on the eastbound
-  // avenue through downtown so the camera stays centred on the chase.
-  state.clock = 17.6;
-  state.money = 2450;
-  putPlayerInCar(state, 500, 1524, 0, '#c0392b');
-  state.mission = {
-    index: 1,
-    def: MISSIONS[1],
-    stageIndex: 2,
-    active: true,
-    failed: false,
-    timer: 0,
-    kills: 0,
-    collected: 0,
-    holdTime: 0,
-    spawned: false,
-  };
-  addWanted(state, 3, 'SCPD pursuit — three stars!');
-  state.dialogue = { speaker: 'Lena Cruz', text: 'Crew is in. Lose them and get to the Safehouse!', until: state.time + 6 };
-  const nav = { stuck: 0, reversing: false, reverseT: 0 };
-  for (let i = 0; i < 200; i += 1) {
-    driveRoad(state, input, 0, 1524, nav);
-    stepWorld(state, input, STEP);
-    input.endFrame();
-  }
-  // Two SCPD cruisers right on the player's tail for the frame.
-  const pc = state.playerCar;
-  for (const back of [190, 330]) {
-    const cop = makeCar(pc.x - Math.cos(pc.angle) * back, pc.y - Math.sin(pc.angle) * back, pc.angle, '#1c2733', 'police');
-    cop.speed = 470;
-    cop.cruise = 520;
-    state.cars.push(cop);
-  }
+export function stageShot(name, world) {
+  world.reset();
+  if (name === 'mission') return stageMission(world);
+  if (name === 'beach') return stageBeach(world);
+  if (name === 'downtown') return stageDowntown(world);
+  return stageChase(world);
 }

@@ -1,98 +1,98 @@
-// Keyboard and mouse input. Keys are tracked by code; the mouse position is
-// kept in screen pixels and the aim angle is computed by the world from it.
-export const ACTION = {
-  UP: 'up',
-  DOWN: 'down',
-  LEFT: 'left',
-  RIGHT: 'right',
-  RUN: 'run',
-  ENTER: 'enter',
-  BRAKE: 'brake',
-  SHOOT: 'shoot',
-  RELOAD: 'reload',
-  PAUSE: 'pause',
-  MUTE: 'mute',
-  INTERACT: 'interact',
-  CONFIRM: 'confirm',
-};
+// Keyboard and mouse input. Held keys give a movement vector each frame;
+// one-shot presses (interact, reload, pause, confirm, continue, mute) are
+// queued as bit flags and taken once by the loop, so a press between two
+// frames is never lost and never counted twice. The mouse aims in world
+// coordinates: the caller supplies the camera each frame.
 
-const KEYMAP = {
-  KeyW: ACTION.UP,
-  ArrowUp: ACTION.UP,
-  KeyS: ACTION.DOWN,
-  ArrowDown: ACTION.DOWN,
-  KeyA: ACTION.LEFT,
-  ArrowLeft: ACTION.LEFT,
-  KeyD: ACTION.RIGHT,
-  ArrowRight: ACTION.RIGHT,
-  ShiftLeft: ACTION.RUN,
-  ShiftRight: ACTION.RUN,
-  KeyE: ACTION.ENTER,
-  Space: ACTION.BRAKE,
-  KeyR: ACTION.RELOAD,
-  KeyF: ACTION.INTERACT,
-  KeyM: ACTION.MUTE,
-  KeyP: ACTION.PAUSE,
-  Escape: ACTION.PAUSE,
-  Enter: ACTION.CONFIRM,
-  NumpadEnter: ACTION.CONFIRM,
-};
+export const ACTION_CONFIRM = 1;
+export const ACTION_PAUSE = 2;
+export const ACTION_INTERACT = 4;
+export const ACTION_RELOAD = 8;
+export const ACTION_CONTINUE = 16;
+export const ACTION_MUTE = 32;
+
+const UP = new Set(['ArrowUp', 'KeyW']);
+const DOWN = new Set(['ArrowDown', 'KeyS']);
+const LEFT = new Set(['ArrowLeft', 'KeyA']);
+const RIGHT = new Set(['ArrowRight', 'KeyD']);
+const RUN = new Set(['ShiftLeft', 'ShiftRight']);
+const HANDBRAKE = new Set(['Space']);
+const CONFIRM = new Set(['Enter']);
+const PAUSE = new Set(['KeyP', 'Escape']);
+const INTERACT = new Set(['KeyE']);
+const RELOAD = new Set(['KeyR']);
+const CONTINUE = new Set(['KeyC']);
+const MUTE = new Set(['KeyM']);
 
 export function createInput(canvas) {
   const held = new Set();
-  const pressed = new Set();
-  const mouse = { x: 0, y: 0, down: false, clicked: false };
+  let actions = 0;
+  let mouseX = 0;
+  let mouseY = 0;
+  let mouseDown = false;
 
-  function onKeyDown(event) {
-    const action = KEYMAP[event.code];
-    if (!action) return;
-    if (event.code === 'Space' || event.code.startsWith('Arrow')) event.preventDefault();
-    if (!event.repeat) pressed.add(action);
-    held.add(action);
-  }
-  function onKeyUp(event) {
-    const action = KEYMAP[event.code];
-    if (action) held.delete(action);
-  }
-  function onMouseMove(event) {
-    const rect = canvas.getBoundingClientRect();
-    mouse.x = event.clientX - rect.left;
-    mouse.y = event.clientY - rect.top;
-  }
-  function onMouseDown(event) {
-    if (event.button !== 0) return;
-    onMouseMove(event);
-    mouse.down = true;
-    mouse.clicked = true;
-    pressed.add(ACTION.SHOOT);
-    held.add(ACTION.SHOOT);
-  }
-  function onMouseUp(event) {
-    if (event.button !== 0) return;
-    mouse.down = false;
-    held.delete(ACTION.SHOOT);
-  }
+  window.addEventListener('keydown', (event) => {
+    if (UP.has(event.code) || DOWN.has(event.code) || LEFT.has(event.code) || RIGHT.has(event.code)
+      || RUN.has(event.code) || HANDBRAKE.has(event.code)) {
+      held.add(event.code);
+      event.preventDefault();
+      return;
+    }
+    if (event.repeat) return;
+    if (CONFIRM.has(event.code)) actions |= ACTION_CONFIRM;
+    else if (PAUSE.has(event.code)) actions |= ACTION_PAUSE;
+    else if (INTERACT.has(event.code)) actions |= ACTION_INTERACT;
+    else if (RELOAD.has(event.code)) actions |= ACTION_RELOAD;
+    else if (CONTINUE.has(event.code)) actions |= ACTION_CONTINUE;
+    else if (MUTE.has(event.code)) actions |= ACTION_MUTE;
+    else return;
+    event.preventDefault();
+  });
+  window.addEventListener('keyup', (event) => {
+    held.delete(event.code);
+  });
+  // A key released while the tab is hidden never sends keyup: let go of
+  // everything on blur so the player never drives off on their own.
+  window.addEventListener('blur', () => {
+    held.clear();
+    mouseDown = false;
+  });
+  canvas.addEventListener('pointermove', (event) => {
+    mouseX = event.clientX;
+    mouseY = event.clientY;
+  });
+  canvas.addEventListener('pointerdown', (event) => {
+    mouseX = event.clientX;
+    mouseY = event.clientY;
+    mouseDown = true;
+    actions |= ACTION_CONFIRM;
+  });
+  window.addEventListener('pointerup', () => {
+    mouseDown = false;
+  });
+  canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
-  canvas.addEventListener('mousemove', onMouseMove);
-  canvas.addEventListener('mousedown', onMouseDown);
-  window.addEventListener('mouseup', onMouseUp);
-  window.addEventListener('blur', () => held.clear());
+  function hasAny(set) {
+    for (const code of set) if (held.has(code)) return true;
+    return false;
+  }
 
   return {
-    held,
-    mouse,
-    is(action) {
-      return held.has(action);
+    /** Movement vector for this frame: x and y in [-1, 1]. */
+    move() {
+      const x = (hasAny(RIGHT) ? 1 : 0) - (hasAny(LEFT) ? 1 : 0);
+      const y = (hasAny(DOWN) ? 1 : 0) - (hasAny(UP) ? 1 : 0);
+      return { x, y };
     },
-    /** True once, on the frame the action started; cleared each frame. */
-    wasPressed(action) {
-      return pressed.has(action);
-    },
-    endFrame() {
-      pressed.clear();
-      mouse.clicked = false;
+    get run() { return hasAny(RUN); },
+    get handbrake() { return hasAny(HANDBRAKE); },
+    get shooting() { return mouseDown; },
+    get mouse() { return { x: mouseX, y: mouseY }; },
+    /** The one-shot presses since the last call, as ACTION_* flags. */
+    takeActions() {
+      const taken = actions;
+      actions = 0;
+      return taken;
     },
   };
 }

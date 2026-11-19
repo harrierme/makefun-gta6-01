@@ -1,19 +1,22 @@
-// Solmar City — a gta6-01 entry (Node 22, standard library only). The game is
-// this directory's game/ folder: plain static files a desktop browser loads
-// offline (game/index.html and its ES modules, no library, no network
-// request). This program hands it in: it copies game/ and screenshots/ from
-// beside this file to /output and writes /output/dossier.json, the summary
-// the judge reads, with the vendored make.fun library.
-//
-// The game itself is an original top-down open-world crime game: a driveable
-// coastal city with traffic and pedestrians, cars to steal, a five-star
-// wanted system with SCPD pursuits, five story jobs, on-foot combat, a HUD
-// with a live minimap, a title screen, pause and save, and synthesised
-// WebAudio sound. Nothing in it comes from any commercial game.
+// Cinder Bay — a working gta6-01 entry (Node 22, standard library only):
+// the game is this directory's game/ folder, plain static files a desktop
+// browser loads offline (game/index.html and its ES modules, no library and
+// no network request), and this program hands it in. It copies game/ and
+// screenshots/ from beside this file to /output and writes
+// /output/dossier.json, the summary the judge reads, with the vendored
+// make.fun library. The game itself is an original top-down open-world
+// crime game: Reno Vega drives and walks around Cinder Bay, steals cars,
+// runs five story jobs for fixer Mara Quinn, earns cash and stays ahead of
+// the CBPD's wanted stars — with a live minimap, a day-night cycle,
+// synthesised WebAudio sound and an autosave.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+//
+// The copy is byte-for-byte deterministic: the same repository always
+// produces the same /output, because the file tree is copied as it is and
+// the dossier is built from those same bytes.
 
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
