@@ -1,98 +1,113 @@
-// Keyboard and mouse input. Held keys give a movement vector each frame;
-// one-shot presses (interact, reload, pause, confirm, continue, mute) are
-// queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice. The mouse aims in world
-// coordinates: the caller supplies the camera each frame.
+// Keyboard and mouse, reduced to the game's actions. Keys are held in a
+// set; `pressed` reports an edge (true once per key press) and is cleared
+// by the main loop at the end of each frame, so a single tap never fires
+// twice. The mouse position is converted from client pixels to world
+// coordinates through the renderer's viewport transform.
 
-export const ACTION_CONFIRM = 1;
-export const ACTION_PAUSE = 2;
-export const ACTION_INTERACT = 4;
-export const ACTION_RELOAD = 8;
-export const ACTION_CONTINUE = 16;
-export const ACTION_MUTE = 32;
+import { VIEW } from './render.js';
 
-const UP = new Set(['ArrowUp', 'KeyW']);
-const DOWN = new Set(['ArrowDown', 'KeyS']);
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const RUN = new Set(['ShiftLeft', 'ShiftRight']);
-const HANDBRAKE = new Set(['Space']);
-const CONFIRM = new Set(['Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
-const INTERACT = new Set(['KeyE']);
-const RELOAD = new Set(['KeyR']);
-const CONTINUE = new Set(['KeyC']);
-const MUTE = new Set(['KeyM']);
+const KEY_ACTIONS = {
+  KeyW: 'up', ArrowUp: 'up',
+  KeyS: 'down', ArrowDown: 'down',
+  KeyA: 'left', ArrowLeft: 'left',
+  KeyD: 'right', ArrowRight: 'right',
+  ShiftLeft: 'run', ShiftRight: 'run',
+  Space: 'handbrake',
+  KeyE: 'interact',
+  KeyR: 'reload',
+  KeyP: 'pause', Escape: 'pause',
+  KeyM: 'mute',
+  Enter: 'confirm',
+  KeyC: 'continue',
+};
+
+export const ACTION_CONFIRM = 'confirm';
+export const ACTION_CONTINUE = 'continue';
+export const ACTION_INTERACT = 'interact';
+export const ACTION_MUTE = 'mute';
+export const ACTION_PAUSE = 'pause';
+export const ACTION_RELOAD = 'reload';
 
 export function createInput(canvas) {
   const held = new Set();
-  let actions = 0;
-  let mouseX = 0;
-  let mouseY = 0;
-  let mouseDown = false;
+  const edges = new Set();
+  let mouseX = VIEW.width / 2;
+  let mouseY = VIEW.height / 2;
+  let mouseDownEdge = false;
 
-  window.addEventListener('keydown', (event) => {
-    if (UP.has(event.code) || DOWN.has(event.code) || LEFT.has(event.code) || RIGHT.has(event.code)
-      || RUN.has(event.code) || HANDBRAKE.has(event.code)) {
-      held.add(event.code);
+  function onKeyDown(event) {
+    const action = KEY_ACTIONS[event.code];
+    if (!action) return;
+    if (['up', 'down', 'left', 'right', 'handbrake', 'interact'].includes(action)) {
       event.preventDefault();
-      return;
     }
-    if (event.repeat) return;
-    if (CONFIRM.has(event.code)) actions |= ACTION_CONFIRM;
-    else if (PAUSE.has(event.code)) actions |= ACTION_PAUSE;
-    else if (INTERACT.has(event.code)) actions |= ACTION_INTERACT;
-    else if (RELOAD.has(event.code)) actions |= ACTION_RELOAD;
-    else if (CONTINUE.has(event.code)) actions |= ACTION_CONTINUE;
-    else if (MUTE.has(event.code)) actions |= ACTION_MUTE;
-    else return;
-    event.preventDefault();
-  });
-  window.addEventListener('keyup', (event) => {
-    held.delete(event.code);
-  });
-  // A key released while the tab is hidden never sends keyup: let go of
-  // everything on blur so the player never drives off on their own.
-  window.addEventListener('blur', () => {
-    held.clear();
-    mouseDown = false;
-  });
-  canvas.addEventListener('pointermove', (event) => {
-    mouseX = event.clientX;
-    mouseY = event.clientY;
-  });
-  canvas.addEventListener('pointerdown', (event) => {
-    mouseX = event.clientX;
-    mouseY = event.clientY;
-    mouseDown = true;
-    actions |= ACTION_CONFIRM;
-  });
-  window.addEventListener('pointerup', () => {
-    mouseDown = false;
-  });
-  canvas.addEventListener('contextmenu', (event) => event.preventDefault());
-
-  function hasAny(set) {
-    for (const code of set) if (held.has(code)) return true;
-    return false;
+    if (!held.has(action)) edges.add(action);
+    held.add(action);
   }
 
+  function onKeyUp(event) {
+    const action = KEY_ACTIONS[event.code];
+    if (action) held.delete(action);
+  }
+
+  function onMouseMove(event) {
+    const rect = canvas.getBoundingClientRect();
+    mouseX = event.clientX - rect.left;
+    mouseY = event.clientY - rect.top;
+  }
+
+  function onMouseDown(event) {
+    if (event.button !== 0) return;
+    const rect = canvas.getBoundingClientRect();
+    mouseX = event.clientX - rect.left;
+    mouseY = event.clientY - rect.top;
+    mouseDownEdge = true;
+  }
+
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  canvas.addEventListener('mousemove', onMouseMove);
+  canvas.addEventListener('mousedown', onMouseDown);
+
   return {
-    /** Movement vector for this frame: x and y in [-1, 1]. */
-    move() {
-      const x = (hasAny(RIGHT) ? 1 : 0) - (hasAny(LEFT) ? 1 : 0);
-      const y = (hasAny(DOWN) ? 1 : 0) - (hasAny(UP) ? 1 : 0);
-      return { x, y };
+    down(action) {
+      return held.has(action);
     },
-    get run() { return hasAny(RUN); },
-    get handbrake() { return hasAny(HANDBRAKE); },
-    get shooting() { return mouseDown; },
-    get mouse() { return { x: mouseX, y: mouseY }; },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
+    // An edge is consumed when it is read: the loop may run several
+    // fixed steps in one frame, and a single tap must fire exactly once
+    // (one E press enters a car — it must not enter and exit it again
+    // in the same frame).
+    pressed(action) {
+      if (action === 'shoot') {
+        const was = mouseDownEdge;
+        mouseDownEdge = false;
+        return was;
+      }
+      if (edges.has(action)) {
+        edges.delete(action);
+        return true;
+      }
+      return false;
+    },
+    // The mouse position in world coordinates, given the camera centre.
+    // The canvas is letterboxed around the 1280x720 view, so client
+    // pixels are scaled back into view pixels first.
+    aimWorld(camera) {
+      const rect = canvas.getBoundingClientRect();
+      const scale = Math.min(rect.width / VIEW.width, rect.height / VIEW.height);
+      const ox = (rect.width - VIEW.width * scale) / 2;
+      const oy = (rect.height - VIEW.height * scale) / 2;
+      const viewX = (mouseX - ox) / scale;
+      const viewY = (mouseY - oy) / scale;
+      return {
+        x: camera.x + (viewX - VIEW.width / 2),
+        y: camera.y + (viewY - VIEW.height / 2),
+      };
+    },
+    // Called once per frame by the main loop: edges are single-frame.
+    endFrame() {
+      edges.clear();
+      mouseDownEdge = false;
     },
   };
 }

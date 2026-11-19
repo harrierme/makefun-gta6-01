@@ -1,137 +1,132 @@
-// Cinder Bay — every tuning number and colour in one place.
+// Cinder Bay — every tuning number, colour and constant in one place.
 // The world is a fixed 3200 x 2400 city; the renderer scales the camera
 // view to the window, so no rule below depends on the screen size.
 
 export const WORLD = { width: 3200, height: 2400 };
 
-// Roads: a grid of avenues (vertical) and streets (horizontal). The beach
-// and ocean sit east of the last avenue; the marina hugs the south-east.
-export const ROADS = {
-  avenues: [200, 600, 1000, 1400, 1800, 2200, 2600],
-  streets: [200, 600, 1000, 1400, 1800, 2200],
-  width: 76,
-  lane: 20,
-};
-
-export const BEACH = { x: 2830, oceanX: 3020 };
-
-/** The simulation's fixed step, in seconds: 60 updates a second. */
+// One fixed simulation step per second; the loop runs several in a slow
+// frame and none in a fast one, so gameplay speed never depends on fps.
 export const STEP = 1 / 60;
 
-/** One in-game hour lasts this many real seconds. */
-export const HOUR_SECONDS = 90;
+export const SAVE_KEY = 'cinder-bay-save-v1';
 
+// The road grid: vertical avenues and horizontal streets, 400 apart, each
+// 110 wide. Blocks between them hold buildings, the park and the marina.
+export const ROAD_HALF = 55;
+export const AVENUES = [250, 650, 1050, 1450, 1850, 2250, 2650];
+export const STREETS = [250, 650, 1050, 1450, 1850, 2150];
+
+// The beach is the eastern strip; the sea starts where the sand ends.
+// Cars and people may walk the sand but nothing crosses into the water.
+export const BEACH_X = 2920;
+export const WATER_X = 3130;
+
+// Player on foot.
 export const PLAYER = {
   radius: 13,
-  walkSpeed: 165,
+  walkSpeed: 170,
   runSpeed: 265,
-  health: 100,
-  // Health trickles back only after this many seconds without taking a hit.
-  regenDelay: 6,
-  regenRate: 4,
-};
-
-export const GUN = {
+  maxHealth: 100,
   magSize: 12,
   reloadSeconds: 1.1,
-  bulletSpeed: 950,
-  bulletRange: 620,
-  damage: 1,
-  // Seconds between shots while the trigger is held.
-  fireInterval: 0.16,
-  spread: 0.045,
+  shootCooldown: 0.22,
+  bulletSpeed: 780,
+  bulletDamage: 34,
 };
 
+// Arcade car handling. Top speed is deliberately above a police cruiser's,
+// so a clean getaway is possible; cruisers make up for it in numbers.
 export const CAR = {
-  length: 46,
-  width: 22,
+  length: 64,
+  width: 32,
   accel: 420,
   reverseAccel: 260,
-  maxSpeed: 520,
-  maxReverse: 160,
-  // Steering at full speed is gentler than at a crawl.
-  steerRate: 2.6,
-  grip: 6.5,
-  handbrakeGrip: 1.4,
-  drag: 0.55,
-  offRoadDrag: 1.9,
-  health: 100,
-  // A crash harder than this hurts the driver too.
-  hardCrashSpeed: 300,
+  brake: 620,
+  maxSpeed: 560,
+  maxReverse: 170,
+  turnRate: 2.6,
+  grip: 3.4,
+  driftGrip: 1.1,
+  handbrakeGrip: 0.55,
+  maxHealth: 100,
+  // A repeat hit on the same pair of cars only counts once per window.
+  crashCooldown: 0.6,
 };
 
-export const TRAFFIC = {
-  count: 16,
-  speed: 150,
-  speedJitter: 55,
-  spawnMargin: 120,
-};
-
-export const PEDS = { count: 26, walkSpeed: 55, fleeSpeed: 150 };
-
+// The wanted system: heat 0..100, one star per 20 heat, five stars max.
+// Heat only falls while no officer can see the player.
 export const WANTED = {
-  max: 5,
-  // Seconds with no cop in sight and no fresh crime before one star fades.
-  coolOffSeconds: 9,
-  stealCarStars: 1,
-  shootStars: 1,
-  killCopStars: 2,
-  // How many police cars are out hunting at each star level.
-  carsForStars: [0, 1, 2, 3, 4, 4],
-  footCopsForStars: [0, 1, 1, 2, 2, 3],
+  maxHeat: 100,
+  heatPerStar: 20,
+  maxStars: 5,
+  decayPerSecond: 2.2,
+  stealHeat: 34,
+  shootHeat: 26,
+  killHeat: 30,
+  seenRadius: 420,
+  // Foot officers are staged outside the seen radius, so heat can fall.
+  footSpawnMin: 560,
+  footSpawnMax: 900,
+  cruiserSpawnMin: 700,
+  cruiserSpawnMax: 1100,
+  maxCruisers: 6,
+  maxFootCops: 8,
 };
 
+// Police cruisers are slower than the player's car and ram on a cooldown,
+// so a chase is escapable instead of a pin.
 export const COP = {
-  footSpeed: 185,
-  // Seconds a foot cop must stay touching the player to make the bust.
-  bustSeconds: 1.2,
-  // Well below the player's top speed, so a straight getaway pulls away.
-  carSpeed: 440,
+  maxSpeed: 500,
+  accel: 380,
+  ramCooldown: 1.4,
+  ramDamage: 9,
+  bustRadius: 34,
+  bustSeconds: 1.6,
+  footSpeed: 200,
 };
 
-export const ENEMY = { health: 3, speed: 120, shootRange: 420, shootInterval: 2.2, spread: 0.24, bulletDamage: 4 };
+// Traffic: how many cars and pedestrians the city keeps alive.
+export const TRAFFIC = { maxCars: 16, maxPeds: 26, carSpeed: 150 };
 
-export const MISSIONS = [
-  { id: 'favor', name: 'A Favor for Mara', reward: 400 },
-  { id: 'getaway', name: 'The Getaway', reward: 900 },
-  { id: 'strand', name: 'Trouble on the Strand', reward: 1200 },
-  { id: 'drops', name: 'Three Drops', reward: 1500 },
-  { id: 'cinder-job', name: 'The Cinder Job', reward: 5000 },
-];
+// The day runs from golden hour (17:30) through the night; a full day
+// takes eight minutes of play, so the light visibly changes in a session.
+export const DAY = { startHour: 17.5, hoursPerSecond: 24 / 480 };
 
-export const PALETTE = {
-  grass: '#4d7a3f',
-  grassDark: '#436e38',
+// Colours, kept in one table so the palette stays coherent.
+export const COLORS = {
+  grass: '#5d8a4a',
+  grassDark: '#527c41',
+  park: '#4f7d3e',
   road: '#3a3d46',
-  roadEdge: '#2c2e36',
   roadLine: '#d8c95a',
   sidewalk: '#8d8578',
-  sand: '#d9c184',
-  ocean: '#1d5f8a',
-  oceanDeep: '#15507a',
-  park: '#3f6b34',
-  buildingRoof: '#6b5a4e',
-  buildingRoofAlt: '#7a6a58',
-  buildingRoofDark: '#54463c',
-  nightOverlay: 'rgba(8, 12, 40, 0.55)',
-  duskOverlay: 'rgba(255, 120, 40, 0.10)',
-  player: '#e8b23a',
-  playerShirt: '#c94f3d',
-  copCar: '#2f6fb2',
-  copCarWhite: '#e8e8e8',
-  hudPanel: 'rgba(10, 12, 18, 0.72)',
-  hudText: '#f2f0e8',
-  hudMuted: '#b9b4a4',
-  hudGold: '#f2c94c',
-  hudRed: '#e5534b',
-  hudGreen: '#7dc383',
-  mission: '#f2c94c',
-  policeBlip: '#5aa2ff',
-  enemyBlip: '#ff5a4e',
-  text: '#f2f0e8',
+  sand: '#e0c98f',
+  water: '#2b6ea6',
+  waterDeep: '#1d4f80',
+  buildingRoof: '#7a6a58',
+  buildingRoof2: '#6b5f52',
+  buildingRoof3: '#8a7a63',
+  glass: '#3f6d8a',
+  tree: '#2f6b2f',
+  treeDark: '#265a26',
+  hudBg: 'rgba(8, 10, 16, 0.72)',
+  hudText: '#f2f0e6',
+  hudAccent: '#ffd34d',
+  mission: '#ffd34d',
+  police: '#4da3ff',
+  enemy: '#ff5a4d',
+  player: '#f2f0e6',
 };
 
-export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
-
-/** Where the autosave lives between visits (this browser only). */
-export const SAVE_KEY = 'cinder-bay.save.v1';
+// The eight named districts, each a rectangle; the HUD names the one the
+// player stands in.
+export const DISTRICTS = [
+  { name: 'Old Foundry', x0: 0, y0: 0, x1: 850, y1: 850 },
+  { name: 'Northgate', x0: 850, y0: 0, x1: 2050, y1: 850 },
+  { name: 'Palm Court', x0: 2050, y0: 0, x1: 2920, y1: 850 },
+  { name: 'Civic Center', x0: 0, y0: 850, x1: 1650, y1: 1650 },
+  { name: 'Willow Park', x0: 850, y0: 1050, x1: 1450, y1: 1450 },
+  { name: 'Harborview', x0: 1650, y0: 850, x1: 2920, y1: 1650 },
+  { name: 'Marina Bay', x0: 1650, y0: 1650, x1: 2920, y1: 2400 },
+  { name: 'The Strand', x0: 2920, y0: 0, x1: 3200, y1: 2400 },
+];

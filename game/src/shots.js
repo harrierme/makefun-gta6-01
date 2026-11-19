@@ -1,137 +1,86 @@
-// The screenshot scenes behind ?shot=chase|mission|beach|downtown. Each one
-// plays the real rules forward from a fresh world for a fixed number of
-// steps, steered by a tiny scripted driver, so the frame is what a short
-// game really looks like — and the same seed always gives the same frame.
-// The runner paints the staged world twice and sets window.__shotReady.
+// Deterministic screenshot staging: ?shot=chase|mission|beach|downtown
+// (with &seed=N) puts the live game into a fixed, good-looking scene and
+// the main loop paints it, so the screenshots are real renders of the
+// game at its best — a chase, a job in progress, the beach shootout and
+// downtown at night — never a composite or an edit.
 
-import { STEP } from './config.js';
-import { SCREEN_PLAY } from './render.js';
-import { startMission } from './missions.js';
+import { createCar, createEnemy } from './entities.js';
+import { shootoutEnemySpots } from './missions.js';
+import { setWanted } from './world.js';
 
-function blankInput() {
-  return {
-    moveX: 0, moveY: 0, run: false, handbrake: false,
-    interact: false, reload: false, shooting: false,
-    aimWorldX: 0, aimWorldY: 0,
-  };
-}
-
-function putPlayerInCar(world, x, y, angle) {
-  const state = world.state;
-  const car = state.cars.find((candidate) => candidate.driver === 'traffic') ?? state.cars[0];
-  car.driver = 'player';
-  car.x = x;
-  car.y = y;
-  car.angle = angle;
-  car.vx = 0;
-  car.vy = 0;
-  car.speed = 0;
-  state.player.car = car;
-  state.player.onFoot = false;
-  state.player.x = x;
-  state.player.y = y;
+// Put the player in a fresh car at a road position, facing east.
+function givePlayerCar(world, x, y, speed) {
+  const car = createCar(world.nextId(), x, y, 0, '#c94f43', { speed });
+  world.cars.push(car);
+  world.player.inCar = car;
+  world.player.x = x;
+  world.player.y = y;
+  car.parked = false;
   return car;
 }
 
-function driveForward(world, seconds, steer) {
-  const input = blankInput();
-  input.moveY = -1;
-  input.moveX = steer ?? 0;
-  for (let i = 0; i < seconds / STEP; i += 1) world.step(STEP, input, null);
+// Stage one cruiser on the road behind the player.
+function addCruiser(world, x, y, angle) {
+  const cruiser = createCar(world.nextId(), x, y, angle, '#2e4a7a', { police: true, speed: 380 });
+  world.cars.push(cruiser);
+  return cruiser;
 }
 
-function stageChase(world) {
-  const state = world.state;
-  state.hour = 17.3; // golden hour: warm light, sirens lit, long shadows
-  state.money = 2450;
-  const car = putPlayerInCar(world, 1400, 1650, -Math.PI / 2);
-  car.color = '#c94f3d';
-  // Three CBPD cruisers right behind, lights on.
-  for (let i = 0; i < 3; i += 1) {
-    const cruiser = world.spawnPoliceCar();
-    cruiser.x = 1400 + (i - 1) * 90;
-    cruiser.y = 1850 + i * 70;
-    cruiser.angle = -Math.PI / 2;
-    cruiser.vx = 0;
-    cruiser.vy = -200;
-    cruiser.speed = 200;
-  }
-  state.wanted = 3;
-  state.sinceCrime = 0;
-  driveForward(world, 3.5, 0);
-  return { screen: SCREEN_PLAY, toast: 'Lose the heat — 3 stars', toastTimer: 4 };
-}
-
-function stageMission(world) {
-  const state = world.state;
-  state.hour = 12.5; // hard noon on the beach
-  state.money = 1820;
-  state.player.x = 2900;
-  state.player.y = 1250;
-  state.player.angle = Math.PI / 2;
-  state.camera.x = 2900;
-  state.camera.y = 1250;
-  state.mission.index = 2;
-  startMission(state);
-  // A short firefight: aim at the nearest Harbor Rat and shoot. Kept
-  // brief so the gang is still standing and the CBPD has not arrived yet.
-  const input = blankInput();
-  for (let i = 0; i < 2.5 / STEP; i += 1) {
-    const enemy = state.enemies[0];
-    if (enemy) {
-      input.aimWorldX = enemy.x;
-      input.aimWorldY = enemy.y;
-      input.shooting = true;
+export function stageShot(world, name) {
+  const player = world.player;
+  if (name === 'chase') {
+    // A three-star chase through Civic Center at golden hour: the player
+    // drifting east with two cruisers on their tail and skid marks behind.
+    world.hour = 17.6;
+    givePlayerCar(world, 1250, 1450, 420);
+    setWanted(world, 3);
+    addCruiser(world, 1050, 1450, 0);
+    addCruiser(world, 980, 1434, 0);
+    addCruiser(world, 1120, 1466, 0);
+    for (let i = 0; i < 14; i += 1) {
+      world.skidMarks.push({ x: 1250 - i * 26, y: 1450 + (i % 2 ? 14 : -14), angle: 0, life: 5 });
     }
-    world.step(STEP, input, null);
-    input.shooting = false;
+    world.camera.x = 1250;
+    world.camera.y = 1450;
+  } else if (name === 'mission') {
+    // The first job: Reno on foot at Mara's office, the delivery live,
+    // the objective on the HUD and the blip on the minimap.
+    world.hour = 10.2;
+    player.x = 650;
+    player.y = 1380;
+    player.angle = Math.PI / 2;
+    world.mission.index = 0;
+    world.mission.active = true;
+    world.mission.step = 0;
+    world.camera.x = 650;
+    world.camera.y = 1450;
+  } else if (name === 'beach') {
+    // The Strand shootout at sunset: Reno on the sand, the crew in front
+    // of him, the sea behind them.
+    world.hour = 18.3;
+    player.x = 2980;
+    player.y = 1280;
+    player.angle = 0.2;
+    world.mission.index = 2;
+    world.mission.active = true;
+    world.mission.step = 1;
+    world.missionEnemiesSpawned = true;
+    for (const spot of shootoutEnemySpots()) {
+      world.enemies.push(createEnemy(world.nextId(), spot.x, spot.y));
+    }
+    world.camera.x = 3010;
+    world.camera.y = 1250;
+  } else if (name === 'downtown') {
+    // Downtown at night: Reno driving past Cinder Bay Bank with traffic
+    // and the city lights coming on.
+    world.hour = 21.4;
+    givePlayerCar(world, 1250, 650, 300);
+    setWanted(world, 1);
+    addCruiser(world, 1000, 650, 0);
+    world.camera.x = 1350;
+    world.camera.y = 650;
+  } else {
+    return false;
   }
-  return { screen: SCREEN_PLAY, toast: 'Trouble on the Strand', toastTimer: 4 };
-}
-
-function stageBeach(world) {
-  const state = world.state;
-  state.hour = 17.6; // golden hour over the ocean
-  state.money = 3100;
-  state.player.x = 3000;
-  state.player.y = 900;
-  state.player.angle = Math.PI / 2;
-  state.camera.x = 3000;
-  state.camera.y = 900;
-  const car = putPlayerInCar(world, 2920, 820, Math.PI / 2);
-  car.color = '#e8b23a';
-  // Step out and admire the view on foot.
-  state.player.car = null;
-  state.player.onFoot = true;
-  car.driver = null;
-  world.step(STEP, blankInput(), null);
-  return { screen: SCREEN_PLAY, toast: '', toastTimer: 0 };
-}
-
-function stageDowntown(world) {
-  const state = world.state;
-  state.hour = 21.5; // night in Civic Center, street lights on
-  state.money = 5400;
-  const car = putPlayerInCar(world, 1400, 800, Math.PI / 2);
-  car.color = '#3d7ac9';
-  const cruiser = world.spawnPoliceCar();
-  cruiser.x = 1400;
-  cruiser.y = 600;
-  cruiser.angle = Math.PI / 2;
-  state.wanted = 1;
-  state.sinceCrime = 0;
-  driveForward(world, 1.5, 0);
-  return { screen: SCREEN_PLAY, toast: '', toastTimer: 0 };
-}
-
-/**
- * Set `world` to the named scene (chase, mission, beach or downtown; any
- * other name is chase) and return the screen to draw over it.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name === 'mission') return stageMission(world);
-  if (name === 'beach') return stageBeach(world);
-  if (name === 'downtown') return stageDowntown(world);
-  return stageChase(world);
+  return true;
 }

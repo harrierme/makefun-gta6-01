@@ -5,21 +5,21 @@
 // localStorage, and a saved game can be continued from the title screen.
 //
 // ?seed=N fixes the random stream. ?shot=chase|mission|beach|downtown (with
-// &seed=N) stages that scene instead of running the loop, paints it twice
-// and sets window.__shotReady for a screenshot.
+// &seed=N) stages that scene instead of running the loop, steps it a fixed
+// number of times so the cars settle, paints it and sets window.__shotReady
+// for a screenshot.
 
 import { SAVE_KEY, STEP } from './config.js';
 import { createRandom } from './random.js';
 import {
-  EVENT_BUSTED, EVENT_CRASH, EVENT_MISSION_DONE, EVENT_MISSION_FAIL,
-  EVENT_MISSION_START, EVENT_PICKUP, EVENT_RELOAD, EVENT_SHOT,
-  EVENT_STEAL, EVENT_WASTED, createWorld,
+  applySave, createWorld, serializeWorld, updateWorld, wantedStars,
 } from './world.js';
 import {
-  ACTION_CONFIRM, ACTION_CONTINUE, ACTION_INTERACT, ACTION_MUTE,
-  ACTION_PAUSE, ACTION_RELOAD, createInput,
+  ACTION_CONFIRM, ACTION_CONTINUE, ACTION_MUTE, ACTION_PAUSE, createInput,
 } from './input.js';
-import { createRenderer, SCREEN_BUSTED, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WASTED } from './render.js';
+import {
+  SCREEN_BUSTED, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WASTED, createRenderer,
+} from './render.js';
 import { stageShot } from './shots.js';
 import { createAudio } from './audio.js';
 
@@ -47,9 +47,18 @@ console.error = (...args) => {
   consoleError(...args);
 };
 
-const world = createWorld(createRandom(seed));
 const renderer = createRenderer(canvas);
 const audio = createAudio();
+const input = createInput(canvas);
+
+let world = createWorld(createRandom(seed));
+// Test handle: the headless playtest drives the live game through this
+// (start it, move the player, read money and mission state). It changes
+// nothing about how the game plays.
+window.__world = world;
+let screen = SCREEN_TITLE;
+let hasSave = false;
+let autosaveTimer = AUTOSAVE_SECONDS;
 
 function readSave() {
   try {
@@ -58,213 +67,164 @@ function readSave() {
     const parsed = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null) return null;
     return parsed;
-  } catch {
+  } catch (error) {
     return null;
   }
 }
 
 function writeSave() {
   try {
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify(world.save()));
-  } catch {
-    // Storage can be off (private windows): the game then lasts one visit.
+    window.localStorage.setItem(SAVE_KEY, JSON.stringify(serializeWorld(world)));
+  } catch (error) {
+    // Storage can be full or blocked; the game plays on without it.
   }
 }
 
-function runShot(name) {
-  const scene = stageShot(name, world);
-  const screen = { name: scene.screen, toast: scene.toast, toastTimer: scene.toastTimer };
-  const ui = { saveExists: false, district: world.district() };
-  let painted = 0;
-  function paint() {
-    renderer.draw(world.state, screen, ui);
-    painted += 1;
-    if (painted < 2) requestAnimationFrame(paint);
-    else {
-      document.title = window.__errors.length > 0 ? `SHOT-ERRORS:${window.__errors.length}` : 'SHOT-READY';
-      window.__shotReady = true;
-    }
-  }
-  requestAnimationFrame(paint);
+hasSave = readSave() !== null;
+
+function setStatus(text) {
+  status.textContent = text;
 }
 
-function runGame() {
-  const input = createInput(canvas);
-  let screen = { name: SCREEN_TITLE, toast: '', toastTimer: 0 };
-  let save = readSave();
-  let accumulator = 0;
-  let last = performance.now();
-  let autosaveTimer = 0;
-  // One-shot presses handleActions takes are held here for the next step.
-  let pendingInteract = false;
-  let pendingReload = false;
-
-  function announce(message) {
-    status.textContent = message;
-  }
-
-  function startFresh() {
-    world.reset();
-    screen = { name: SCREEN_PLAY, toast: '', toastTimer: 0 };
-    autosaveTimer = 0;
-    announce('Playing. Find the yellow M to start a job for Mara Quinn.');
-  }
-
-  function continueSave() {
-    if (!save) return;
-    world.load(save);
-    screen = { name: SCREEN_PLAY, toast: 'Welcome back to Cinder Bay', toastTimer: 3 };
-    autosaveTimer = 0;
-    announce('Continuing your saved game.');
-  }
-
-  function showToast(message, seconds) {
-    screen.toast = message;
-    screen.toastTimer = seconds;
-  }
-
-  function endRun(kind) {
-    screen = { name: kind === 'busted' ? SCREEN_BUSTED : SCREEN_WASTED, toast: '', toastTimer: 0 };
-    writeSave();
-    announce(kind === 'busted' ? 'Busted. The CBPD caught you.' : 'Wasted. Reno went down.');
-  }
-
-  // The mouse aims in world coordinates: undo the renderer's centring and
-  // scaling, then add the camera position.
-  function aimWorld() {
-    const rect = canvas.getBoundingClientRect();
-    const mouse = input.mouse;
-    const scale = Math.min(rect.width / 1280, rect.height / 720);
-    const offsetX = (rect.width - 1280 * scale) / 2;
-    const offsetY = (rect.height - 720 * scale) / 2;
-    const logicalX = (mouse.x - rect.left - offsetX) / scale;
-    const logicalY = (mouse.y - rect.top - offsetY) / scale;
-    const state = world.state;
-    const camX = Math.max(580, Math.min(3200 - 580, state.camera.x));
-    const camY = Math.max(300, Math.min(2400 - 300, state.camera.y));
-    return { x: camX - 640 + logicalX, y: camY - 360 + logicalY };
-  }
-
-  function handleEvents(events) {
-    if (events & EVENT_SHOT) audio.gunshot();
-    if (events & EVENT_CRASH) audio.crash(0.5);
-    if (events & EVENT_RELOAD) audio.reload();
-    if (events & EVENT_PICKUP) audio.pickup();
-    if (events & EVENT_STEAL) audio.click();
-    if (events & EVENT_MISSION_START) {
-      audio.click();
-      if (world.state.mission.intro) showToast(world.state.mission.intro, 4);
-    }
-    if (events & EVENT_MISSION_DONE) {
-      audio.missionDone();
-      showToast('Job done — Mara pays up', 4);
+// Drain the world's event queue into sounds and save points.
+function drainEvents() {
+  for (const event of world.events) {
+    if (event.type === 'shot') audio.gunshot();
+    else if (event.type === 'enemy-shot') audio.enemyShot();
+    else if (event.type === 'crash') audio.crash();
+    else if (event.type === 'pickup') audio.pickup();
+    else if (event.type === 'mission-complete') {
+      audio.missionComplete();
       writeSave();
-    }
-    if (events & EVENT_MISSION_FAIL) {
-      showToast('Job failed — the drop went cold', 4);
-    }
-    if (events & EVENT_BUSTED) {
-      audio.busted();
-      endRun('busted');
-    }
-    if (events & EVENT_WASTED) {
-      audio.wasted();
-      endRun('wasted');
-    }
+    } else if (event.type === 'horn') audio.horn();
   }
+  world.events.length = 0;
+}
 
-  function handleActions() {
-    const actions = input.takeActions();
-    if (actions & ACTION_MUTE) {
-      const muted = audio.toggleMute();
-      announce(muted ? 'Muted.' : 'Sound on.');
-    }
-    if (actions & ACTION_INTERACT) pendingInteract = true;
-    if (actions & ACTION_RELOAD) pendingReload = true;
-    if (screen.name === SCREEN_TITLE) {
-      if (actions & ACTION_CONTINUE && save) continueSave();
-      else if (actions & ACTION_CONFIRM) {
-        audio.unlock();
-        startFresh();
-      }
-      return;
-    }
-    if (screen.name === SCREEN_BUSTED || screen.name === SCREEN_WASTED) {
-      if (actions & ACTION_CONFIRM) {
-        audio.unlock();
-        startFresh();
-      }
-      return;
-    }
-    if (actions & ACTION_PAUSE && screen.name === SCREEN_PLAY) {
-      screen.name = SCREEN_PAUSED;
-      announce('Paused.');
-    } else if (actions & (ACTION_PAUSE | ACTION_CONFIRM) && screen.name === SCREEN_PAUSED) {
-      screen.name = SCREEN_PLAY;
-      announce('Playing.');
-    }
-  }
+function startNewGame() {
+  world = createWorld(createRandom(seed));
+  window.__world = world;
+  screen = SCREEN_PLAY;
+  autosaveTimer = AUTOSAVE_SECONDS;
+  audio.resume();
+  setStatus('Playing Cinder Bay');
+}
 
-  function step() {
-    const move = input.move();
-    const aim = aimWorld();
-    const worldInput = {
-      moveX: move.x,
-      moveY: move.y,
-      run: input.run,
-      handbrake: input.handbrake,
-      interact: pendingInteract,
-      reload: pendingReload,
-      shooting: input.shooting,
-      aimWorldX: aim.x,
-      aimWorldY: aim.y,
-    };
-    pendingInteract = false;
-    pendingReload = false;
-    const events = world.step(STEP, worldInput, null);
-    handleEvents(events);
-    // Engine hum and sirens follow the world.
-    const player = world.state.player;
-    const speed01 = player.car ? Math.abs(player.car.speed) / 520 : 0;
-    audio.setEngine(speed01, !player.onFoot);
-    const policeOut = world.state.cars.some((car) => car.driver === 'police' && car.health > 0);
-    audio.setSiren(world.state.wanted > 0 && policeOut);
-    if (screen.toastTimer > 0) screen.toastTimer -= STEP;
-    autosaveTimer += STEP;
-    if (autosaveTimer >= AUTOSAVE_SECONDS) {
-      autosaveTimer = 0;
-      writeSave();
-    }
-  }
+function continueSave() {
+  const save = readSave();
+  if (!save) return;
+  world = createWorld(createRandom(seed));
+  window.__world = world;
+  applySave(world, save);
+  screen = SCREEN_PLAY;
+  autosaveTimer = AUTOSAVE_SECONDS;
+  audio.resume();
+  setStatus('Playing Cinder Bay, continued from your save');
+}
 
-  function frame(now) {
-    requestAnimationFrame(frame);
-    accumulator += Math.min((now - last) / 1000, MAX_FRAME);
-    last = now;
-    handleActions();
-    if (screen.name === SCREEN_PLAY) {
-      while (accumulator >= STEP && screen.name === SCREEN_PLAY) {
-        step();
-        accumulator -= STEP;
-      }
-    } else {
-      accumulator = 0;
-    }
-    renderer.draw(world.state, screen, { saveExists: save !== null, district: world.district() });
-  }
-
-  // Leaving the tab pauses a running game rather than letting the CBPD
-  // close in unseen.
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && screen.name === SCREEN_PLAY) {
-      screen.name = SCREEN_PAUSED;
-      announce('Paused.');
-    }
-  });
-
-  announce('Cinder Bay. Press Space or click to start.');
+function frame(now) {
   requestAnimationFrame(frame);
+  const dt = Math.min(MAX_FRAME, (now - lastNow) / 1000 || 0);
+  lastNow = now;
+
+  if (input.pressed(ACTION_MUTE)) {
+    audio.setMuted(!audio.isMuted());
+  }
+
+  if (screen === SCREEN_TITLE) {
+    if (input.pressed(ACTION_CONFIRM)) startNewGame();
+    else if (input.pressed(ACTION_CONTINUE) && hasSave) continueSave();
+    renderer.render(world, SCREEN_TITLE, { hasSave });
+  } else if (screen === SCREEN_PLAY) {
+    if (input.pressed(ACTION_PAUSE)) {
+      screen = SCREEN_PAUSED;
+      setStatus('Paused');
+    } else {
+      let remaining = dt;
+      while (remaining > 0) {
+        const step = Math.min(STEP, remaining);
+        updateWorld(world, input, step);
+        remaining -= step;
+        if (world.over) break;
+      }
+      drainEvents();
+      if (world.over === 'busted') {
+        screen = SCREEN_BUSTED;
+        writeSave();
+        setStatus('Busted by the CBPD');
+      } else if (world.over === 'wasted') {
+        screen = SCREEN_WASTED;
+        writeSave();
+        setStatus('Wasted');
+      }
+      autosaveTimer -= dt;
+      if (autosaveTimer <= 0) {
+        autosaveTimer = AUTOSAVE_SECONDS;
+        writeSave();
+      }
+      const focus = world.player.inCar ?? world.player;
+      audio.update({
+        speed: world.player.inCar ? world.player.inCar.speed : 0,
+        wantedStars: wantedStars(world),
+        playing: screen === SCREEN_PLAY,
+      });
+      void focus;
+      renderer.render(world, SCREEN_PLAY);
+    }
+    if (screen === SCREEN_PAUSED) renderer.render(world, SCREEN_PAUSED);
+  } else if (screen === SCREEN_PAUSED) {
+    if (input.pressed(ACTION_PAUSE)) {
+      screen = SCREEN_PLAY;
+      setStatus('Playing Cinder Bay');
+    }
+    renderer.render(world, SCREEN_PAUSED);
+  } else if (screen === SCREEN_BUSTED || screen === SCREEN_WASTED) {
+    if (input.pressed(ACTION_CONFIRM)) {
+      world = createWorld(createRandom(seed));
+      window.__world = world;
+      screen = SCREEN_TITLE;
+      hasSave = readSave() !== null;
+      setStatus('Cinder Bay title screen');
+    }
+    renderer.render(world, screen);
+  }
+
+  input.endFrame();
 }
 
-if (shot) runShot(shot);
-else runGame();
+let lastNow = 0;
+
+// Screenshot staging: no loop, no input — stage the scene, settle it with
+// a fixed number of steps, paint it, and signal readiness.
+if (shot) {
+  const nullInput = {
+    // Hold the throttle only while the player is in a car, so a staged
+    // chase is still moving when the screenshot is taken; on foot the
+    // player stays exactly where the shot put them.
+    down: (action) => action === 'up' && !!world.player.inCar,
+    pressed: () => false,
+    aimWorld: () => ({ x: world.player.x, y: world.player.y }),
+    endFrame: () => {},
+  };
+  if (stageShot(world, shot)) {
+    for (let i = 0; i < 45; i += 1) updateWorld(world, nullInput, STEP);
+    world.events.length = 0;
+    window.__shotReady = true;
+    // Repaint every frame: a resize (for example from the screenshot
+    // tool's metrics override) clears the canvas, and the staged scene
+    // must survive it. The world is settled, so each frame is identical.
+    const paint = () => {
+      renderer.render(world, SCREEN_PLAY);
+      requestAnimationFrame(paint);
+    };
+    paint();
+  } else {
+    window.__errors.push(`unknown shot: ${shot}`);
+  }
+} else {
+  setStatus('Cinder Bay title screen');
+  requestAnimationFrame((now) => {
+    lastNow = now;
+    requestAnimationFrame(frame);
+  });
+}
